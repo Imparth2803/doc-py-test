@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from 'react';
 import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { AIAnalysisResult } from '../services/geminiService';
 
@@ -34,6 +40,7 @@ interface AppState {
   saveDocument: (name: string, folder: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost?: number, rupeesCost?: number, mimeType?: string) => void;
   addFolder: (folder: string) => void;
   setPricingOpen: (open: boolean) => void;
+  fetchLiveDocuments: () => Promise<void>;
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
@@ -219,7 +226,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [aiUnitsUsed, setAiUnitsUsed] = useState(1245); // Seeded lifetime used
   const [aiCreditsUsed, setAiCreditsUsed] = useState(373.50); // Seeded lifetime used
   const [isPricingOpen, setIsPricingOpen] = useState(false);
-
+  useEffect(() => {
+  fetchLiveDocuments();
+  }, []);
   const addFolder = (folder: string) => {
     setCustomFolders(prev => {
       if (!prev.includes(folder) && !ALL_FOLDERS.includes(folder)) {
@@ -242,6 +251,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const goToArchive = () => setCurrentView('archive');
   const goToTree = () => setCurrentView('tree');
   const goToEntity = () => setCurrentView('entity');
+  const fetchLiveDocuments = async () => {
+    try {
+      const response = await fetch(
+        'http://192.168.0.105:8000/api/documents'
+      );
+
+      const liveData = await response.json();
+
+      console.log(
+        'Fetched MongoDB Documents:',
+        liveData
+      );
+
+      const mongoDocs = (
+        liveData.documents || []
+      ).map((doc: any) => ({
+        id: doc._id,
+
+        name: doc.originalName,
+
+        date: new Date()
+          .toISOString()
+          .split('T')[0],
+
+        folder: 'Uploads',
+
+        tags: [],
+
+        entities: [],
+
+        docType:
+          doc.mimeType?.split('/')[1] ||
+          'Document',
+
+        metadata: {},
+
+        mimeType: doc.mimeType,
+      }));
+
+      setDocuments(prev => {
+        const existingIds = new Set(
+          prev.map(d => d.id)
+        );
+
+        const uniqueMongoDocs =
+          mongoDocs.filter(
+            (d: any) =>
+              !existingIds.has(d.id)
+          );
+
+        return [
+          ...prev,
+          ...uniqueMongoDocs,
+        ];
+      });
+    } catch (error) {
+      console.error(
+        'Fetch documents error:',
+        error
+      );
+    }
+  };
   
   const setPendingDocument = (doc: PendingDocument | null) => {
     setPendingDoc(doc);
@@ -298,7 +369,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPendingDocument,
       saveDocument,
       addFolder,
-      setPricingOpen
+      setPricingOpen,
+      fetchLiveDocuments,
     }}>
       {children}
     </AppContext.Provider>

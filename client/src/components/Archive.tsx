@@ -1,4 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, {
+  useState,
+  useMemo,
+  useEffect,
+} from 'react';
 import { useApp } from '../context/AppContext';
 import { Document } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -8,7 +12,12 @@ import { TopNav } from './TopNav';
 import { shareDocument } from '../lib/shareUtils';
 
 export function Archive() {
-  const { documents, goToUpload, logout } = useApp();
+  const {
+  documents,
+  goToUpload,
+  logout,
+  fetchLiveDocuments,
+  } = useApp();
   
   // Facet State
   const [searchQuery, setSearchQuery] = useState('');
@@ -22,6 +31,9 @@ export function Archive() {
 
   // Mobile sidebar toggle - NOW USED FOR DESKTOP TOO (hidden by default)
   const [showFilters, setShowFilters] = useState(false);
+  useEffect(() => {
+  fetchLiveDocuments();
+  }, []);
 
   // Omnisearch logic
   const searchedDocs = useMemo(() => {
@@ -54,7 +66,9 @@ export function Archive() {
   const allDocTypes = useMemo(() => Array.from(new Set(documents.map(d => d.docType || 'Document'))).sort(), [documents]);
   const allTags = useMemo(() => {
     const s = new Set<string>();
-    documents.forEach(d => d.tags.forEach(t => s.add(t)));
+    documents.forEach(d => {
+    (d.tags || []).forEach(t => s.add(t));
+    });
     return Array.from(s).sort();
   }, [documents]);
 

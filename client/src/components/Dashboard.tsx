@@ -297,7 +297,7 @@ export function Dashboard() {
 
              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                {missingDocs.slice(0, 6).map(doc => (
-                 <div key={doc.id} className="flex flex-col p-4 bg-gray-50/50 border border-gray-100 rounded-2xl group hover:bg-white hover:shadow-md transition-all">
+                 <div key={doc._id} className="flex flex-col p-4 bg-gray-50/50 border border-gray-100 rounded-2xl group hover:bg-white hover:shadow-md transition-all">
                     <div className="flex items-center justify-between mb-2">
                        <ShieldAlert size={16} className="text-gray-300 group-hover:text-blue-500 transition-colors" />
                        <Plus size={14} className="text-gray-400" />

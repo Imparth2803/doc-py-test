@@ -30,9 +30,12 @@ export async function analyzeDocumentWithGemini(
   fileName?: string, 
   existingEntities: string[] = []
 ): Promise<AIAnalysisResult> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  
+  // ✅ FIX: Use Vite meta env compilation variables
+  const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY; 
+  
   if (!apiKey) {
-    throw new Error("Gemini API key is missing. Please check your environment configuration.");
+    throw new Error("Gemini API key is missing. Please check your client-side environment configuration.");
   }
 
   const ai = new GoogleGenAI({ apiKey });

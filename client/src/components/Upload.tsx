@@ -7,7 +7,13 @@ import { HubWizard } from './HubWizard';
 import { TopNav } from './TopNav';
 
 export function Upload() {
-  const { setPendingDocument, documents, aiUnits, setPricingOpen } = useApp();
+  const {
+  setPendingDocument,
+  documents,
+  aiUnits,
+  setPricingOpen,
+  fetchLiveDocuments,
+  } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -30,6 +36,7 @@ export function Upload() {
              mimeType: file.type,
              aiResult
            });
+           await fetchLiveDocuments();
         } catch (err: any) {
            console.error("Analysis caught error:", err);
            setErrorMsg(err.message || 'Analysis failed. Please try again.');
