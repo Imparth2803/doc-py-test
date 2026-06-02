@@ -23,9 +23,9 @@ export function Review() {
 
   useEffect(() => {
     if (pendingDoc?.aiResult) {
-      setDocName(pendingDoc.aiResult.docName || pendingDoc.file.name);
+      setDocName(pendingDoc.aiResult.originalName || pendingDoc.file.name);
       
-      const { entities: resEnt, folder: resFold } = pendingDoc.aiResult;
+      const { entities: resEnt, docType: resFold } = pendingDoc.aiResult;
       
       if ((resEnt && resEnt.length > 0 && resEnt[0] === 'UNKNOWN') || resFold === 'UNKNOWN') {
          setIsCreatingNewFolder(true);
@@ -66,7 +66,7 @@ export function Review() {
        addFolder(finalFolder);
     }
     const finalEntities = entitiesStr.split(',').map(s => s.trim()).filter(Boolean);
-    saveDocument(docName || pendingDoc.file.name, finalFolder, tags, pendingDoc.base64Data, finalEntities, 'Document', metadata, unitsUsed, creditCost, pendingDoc.mimeType);
+    saveDocument(docName || pendingDoc.file.name, finalFolder, tags, pendingDoc.base64Data, finalEntities, finalFolder, metadata, unitsUsed, creditCost, pendingDoc.mimeType);
   };
 
   const handleRemoveTag = (indexToRemove: number) => {

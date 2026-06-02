@@ -31,10 +31,13 @@ export const ALL_FOLDERS = Object.values(FOLDER_TEMPLATES).flat();
 export type DocumentTag = string;
 
 export type Document = {
-  id: string;
+  _id: string;
+  id: string; // Internal React key / legacy compatibility
   name: string;
   date: string;
   folder: string;
+  vaultCategory?: string;
+  vaultFolder?: string;
   tags: DocumentTag[];
   previewUrl?: string; // a data URL for preview
   mimeType?: string;

@@ -5,11 +5,10 @@ import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
-import { analyzeDocumentWithGemini } from '../services/geminiService';
+import { uploadDocument, processDocument } from '../services/documentApi';
 import { shareDocument } from '../lib/shareUtils';
-
 export function TreeView() {
-  const { documents, customFolders, goToUpload, setPendingDocument } = useApp();
+  const { documents, customFolders, goToUpload, setPendingDocument, fetchLiveDocuments } = useApp();
 
   // state to track expanded categories and entities
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
@@ -37,33 +36,41 @@ export function TreeView() {
          const base64Data = reader.result as string;
          setIsAnalyzing(true);
          try {
-           const existingEntities = Array.from(new Set(documents.flatMap(d => (d.entities || []) as string[]))) as string[];
-           const aiResult = await analyzeDocumentWithGemini(base64Data, file.type, file.name, existingEntities);
+           // 1. Upload
+           const uploadedDoc = await uploadDocument(file);
            
-           aiResult.folder = targetFolder;
+           // 2. Process
+           const aiResult = await processDocument(uploadedDoc._id);
            
-           setPendingDocument({
-              file,
-              base64Data,
-              mimeType: file.type,
-              aiResult
-           });
-           goToUpload();
-         } catch (error) {
+           // Refresh list
+           await fetchLiveDocuments();
+
            setPendingDocument({
               file,
               base64Data,
               mimeType: file.type,
               aiResult: {
-                 docName: file.name,
-                 entities: ['UNKNOWN'],
-                 folder: targetFolder,
-                 tags: [],
-                 confidence: 'LOW',
-                 metadata: {}
+                ...aiResult,
+                docType: targetFolder // override with selected folder
               }
            });
-           goToUpload();
+         } catch (error) {
+           console.error("Direct upload error:", error);
+           setPendingDocument({
+              file,
+              base64Data,
+              mimeType: file.type,
+              aiResult: {
+                 _id: '',
+                 originalName: file.name,
+                 mimeType: file.type,
+                 status: 'FAILED',
+                 entities: ['UNKNOWN'],
+                 docType: targetFolder,
+                 tags: [],
+                 metadata: {}
+              } as any
+           });
          } finally {
            setIsAnalyzing(false);
          }
@@ -109,7 +116,7 @@ export function TreeView() {
     });
     
     documents.forEach(doc => {
-      const folder = doc.folder || 'Unsorted';
+      const folder = doc.vaultFolder || 'Unsorted';
       const entities = doc.entities && doc.entities.length ? doc.entities : ['General'];
       
       if (!rootMap.has(folder)) rootMap.set(folder, new Map());
@@ -120,7 +127,17 @@ export function TreeView() {
          folderMap.get(entity)!.push(doc);
       });
     });
-
+    console.log(
+      "TREE DATA",
+      documents.map(d => ({
+         name: d.name,
+         folder: d.folder,
+         vaultFolder: d.vaultFolder,
+         category: d.vaultCategory,
+         entities: d.entities
+      }))
+      );
+    console.log("ROOT MAP", rootMap);
     return rootMap;
   }, [documents, customFolders]);
 
@@ -245,9 +262,9 @@ export function TreeView() {
                                                                 exit={{ height: 0, opacity: 0 }}
                                                                 className="overflow-hidden pl-7 border-l border-gray-100 ml-3.5 my-1"
                                                              >
-                                                                {docs.map(doc => (
-                                                                  <div 
-                                                                     key={doc.id} 
+                                                                {docs.map((doc: Document) => (
+                                                                  <div
+                                                                     key={doc._id}
                                                                      onClick={() => setViewingDoc(doc)}
                                                                      className="flex justify-between items-center py-2 px-3 hover:bg-white rounded-lg transition-colors cursor-pointer group"
                                                                   >
@@ -349,9 +366,9 @@ export function TreeView() {
                                                      exit={{ height: 0, opacity: 0 }}
                                                      className="overflow-hidden pl-7 border-l border-gray-100 ml-3.5 my-1"
                                                   >
-                                                     {docs.map(doc => (
-                                                       <div 
-                                                          key={doc.id} 
+                                                     {docs.map((doc: Document) => (
+                                                       <div
+                                                          key={doc._id}
                                                           onClick={() => setViewingDoc(doc)}
                                                           className="flex justify-between items-center py-2 px-3 hover:bg-white rounded-lg transition-colors cursor-pointer group"
                                                        >
@@ -431,7 +448,7 @@ export function TreeView() {
                
                <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh]">
                   <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8">{viewingDoc.name}</h2>
-                  
+
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                       <div>

@@ -5,11 +5,11 @@ import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
-import { analyzeDocumentWithGemini } from '../services/geminiService';
+import { uploadDocument, processDocument } from '../services/documentApi';
 import { shareDocument } from '../lib/shareUtils';
 
 export function EntityView() {
-  const { documents, customFolders } = useApp();
+  const { documents, customFolders, goToUpload, setPendingDocument, fetchLiveDocuments } = useApp();
 
   // state to track expanded categories and entities
   const [expandedEntities, setExpandedEntities] = useState<Set<string>>(new Set());
@@ -19,8 +19,6 @@ export function EntityView() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetEntityAndFolder, setTargetEntityAndFolder] = useState<{entity: string, folder: string} | null>(null);
-
-  const { goToUpload, setPendingDocument } = useApp();
 
   const handleAddDirect = (entity: string, folder: string) => {
      setTargetEntityAndFolder({ entity, folder });
@@ -38,20 +36,25 @@ export function EntityView() {
          const base64Data = reader.result as string;
          setIsAnalyzing(true);
          try {
-           const existingEntities = Array.from(new Set(documents.flatMap(d => (d.entities || []) as string[]))) as string[];
-           const aiResult = await analyzeDocumentWithGemini(base64Data, file.type, file.name, existingEntities);
+           // 1. Upload
+           const uploadedDoc = await uploadDocument(file);
            
-           // Override the config with target values
-           aiResult.folder = targetEntityAndFolder.folder;
-           aiResult.entities = [targetEntityAndFolder.entity];
+           // 2. Process
+           const aiResult = await processDocument(uploadedDoc._id);
            
+           // Refresh list
+           await fetchLiveDocuments();
+
            setPendingDocument({
               file,
               base64Data,
               mimeType: file.type,
-              aiResult
+              aiResult: {
+                ...aiResult,
+                docType: targetEntityAndFolder.folder,
+                entities: [targetEntityAndFolder.entity]
+              }
            });
-           goToUpload();
          } catch (error) {
            console.error("Analysis failed", error);
            // Fallback to manual entry
@@ -60,13 +63,16 @@ export function EntityView() {
               base64Data,
               mimeType: file.type,
               aiResult: {
-                 docName: file.name,
+                 _id: '',
+                 originalName: file.name,
+                 mimeType: file.type,
+                 status: 'FAILED',
                  entities: [targetEntityAndFolder.entity],
-                 folder: targetEntityAndFolder.folder,
+                 docType: targetEntityAndFolder.folder,
                  tags: [],
                  confidence: 'LOW',
                  metadata: {}
-              }
+              } as any
            });
            goToUpload();
          } finally {
@@ -97,32 +103,34 @@ export function EntityView() {
 
   const treeData = useMemo(() => {
     const rootMap = new Map<string, Map<string, Document[]>>();
-    
-    // Determine existing entities
-    const knownEntities = Array.from(new Set(documents.flatMap(d => (d.entities || []) as string[]))) as string[];
-    if (knownEntities.length === 0) knownEntities.push('General');
 
-    const allKnownFolders = [...ALL_FOLDERS, ...customFolders];
+  documents.forEach(doc => {
+    const entities =
+      doc.entities?.length
+        ? doc.entities
+        : ['General'];
 
-    // Seed every entity with empty arrays for all folders
-    knownEntities.forEach(ent => {
-       const folderMap = new Map<string, Document[]>();
-       allKnownFolders.forEach(f => folderMap.set(f, []));
-       rootMap.set(ent, folderMap);
+    const folder =
+      doc.folder ||
+      doc.vaultFolder ||
+      'Unsorted';
+
+    entities.forEach(entity => {
+      if (!rootMap.has(entity)) {
+        rootMap.set(entity, new Map());
+      }
+
+      const entityMap = rootMap.get(entity)!;
+
+      if (!entityMap.has(folder)) {
+        entityMap.set(folder, []);
+      }
+
+      entityMap.get(folder)!.push(doc);
     });
-    
-    documents.forEach(doc => {
-      const entities = doc.entities && doc.entities.length ? doc.entities : ['General'];
-      const folder = doc.folder || 'Unsorted';
-      
-      entities.forEach(entity => {
-        const entityMap = rootMap.get(entity)!;
-        if (!entityMap.has(folder)) entityMap.set(folder, []);
-        entityMap.get(folder)!.push(doc);
-      });
-    });
+  });
 
-    return rootMap;
+  return rootMap;
   }, [documents, customFolders]);
 
   return (

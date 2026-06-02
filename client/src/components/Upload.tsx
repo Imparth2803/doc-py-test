@@ -2,63 +2,84 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { motion } from 'motion/react';
 import { UploadCloud, Zap } from 'lucide-react';
-import { analyzeDocumentWithGemini } from '../services/geminiService';
+import {
+  uploadDocument,
+  processDocument
+} from '../services/documentApi';
 import { HubWizard } from './HubWizard';
 import { TopNav } from './TopNav';
-
+import { Document } from '../types';
 export function Upload() {
   const {
-  setPendingDocument,
   documents,
   aiUnits,
   setPricingOpen,
   fetchLiveDocuments,
+  setPendingDocument,
   } = useApp();
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const processFile = async (file: File) => {
-    setIsProcessing(true);
-    setErrorMsg(null);
+  setIsProcessing(true);
+  setErrorMsg(null);
+
+  try {
+    console.log('Uploading document...');
+
+    // Upload file to backend
+    const uploadedDoc = await uploadDocument(file);
+
+    console.log('Upload successful:', uploadedDoc);
+
+    // Trigger backend AI processing
+    const processedDoc = await processDocument(uploadedDoc._id);
+
+    console.log('Processing complete:', processedDoc);
+
+    // Refresh documents from backend (swallow error so we can still get to Review)
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Data = reader.result as string;
-        console.log("FileReader finished reading. Size:", base64Data?.length);
-        try {
-           const existingEntities: string[] = Array.from(new Set(documents.flatMap((d: any) => (d.entities || []) as string[])));
-           console.log("Calling analyzeDocumentWithGemini...");
-           const aiResult = await analyzeDocumentWithGemini(base64Data, file.type, file.name, existingEntities);
-           console.log("Analysis result:", aiResult);
-           setPendingDocument({
-             file,
-             base64Data,
-             mimeType: file.type,
-             aiResult
-           });
-           await fetchLiveDocuments();
-        } catch (err: any) {
-           console.error("Analysis caught error:", err);
-           setErrorMsg(err.message || 'Analysis failed. Please try again.');
-           setIsProcessing(false);
-        }
-      };
-      reader.onerror = () => {
-         setErrorMsg("Failed to read the file from your local system.");
-         setIsProcessing(false);
-      };
-      reader.readAsDataURL(file);
+      await fetchLiveDocuments();
     } catch (e) {
-      setErrorMsg("Failed to read file.");
-      setIsProcessing(false);
+      console.error('Non-critical fetch error:', e);
     }
-  };
+
+    console.log('Preparing Review screen...');
+
+    // Trigger Review Screen
+    const base64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(file);
+    });
+
+    setPendingDocument({
+      file,
+      base64Data: base64,
+      mimeType: file.type,
+      aiResult: processedDoc
+    });
+
+  } catch (err: any) {
+    console.error('Upload/processing error details:', {
+      message: err.message,
+      stack: err.stack,
+      error: err
+    });
+
+    setErrorMsg(
+      `Upload failed: ${err.message || 'Unknown error'}`
+    );
+  } finally {
+    setIsProcessing(false);
+  }
+ };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement> | any) => {
     e.preventDefault();
     const file = e.target.files?.[0] || e.dataTransfer?.files?.[0];
     if (file) {
-      if (documents.some(d => d.name === file.name)) {
+      if (documents.some((d: any) => d.name === file.name)) {
         setErrorMsg(`A document named "${file.name}" has already been uploaded. Duplicate rejected.`);
         // Reset file input value to allow re-selection if needed
         if (e.target && 'value' in e.target) {
