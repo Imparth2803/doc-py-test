@@ -1,6 +1,9 @@
 export interface ApiDocument {
   _id: string;
   originalName: string;
+  storagePath?: string;
+  documentName?: string;
+  suggestedFilename?: string;
   mimeType: string;
   status: 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 
@@ -12,6 +15,7 @@ export interface ApiDocument {
 
   tags?: string[];
   entities?: string[];
+
 
   confidence?: 'HIGH' | 'LOW';
   metrics?: {

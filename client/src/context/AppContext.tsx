@@ -15,6 +15,7 @@ export interface PendingDocument {
   file: File;
   base64Data: string;
   mimeType: string;
+  serverUrl?: string;
   aiResult?: ApiDocument;
 }
 
@@ -28,9 +29,11 @@ interface AppState {
   aiUnitsUsed: number;
   aiCreditsUsed: number;
   isPricingOpen: boolean;
+  user: any | null;
+  isAuthenticated: boolean;
   
   // Actions
-  login: () => void;
+  login: (token: string, user: any) => void;
   logout: () => void;
   goToDashboard: () => void;
   goToUpload: () => void;
@@ -38,8 +41,8 @@ interface AppState {
   goToTree: () => void;
   goToEntity: () => void;
   setPendingDocument: (doc: PendingDocument | null) => void;
-  saveDocument: (name: string, folder: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost?: number, rupeesCost?: number, mimeType?: string) => void;
   addFolder: (folder: string) => void;
+  saveDocument: (name: string, folder: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost?: number, rupeesCost?: number, mimeType?: string) => void;
   setPricingOpen: (open: boolean) => void;
   fetchLiveDocuments: () => Promise<void>;
 }
@@ -47,32 +50,92 @@ interface AppState {
 const AppContext = createContext<AppState | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [currentView, setCurrentView] = useState<ViewState>('login');
+  const [currentView, setCurrentViewInternal] = useState<ViewState>(() => {
+    const savedView = localStorage.getItem('currentView') as ViewState;
+    return savedView || 'login';
+  });
+
+  const setCurrentView = (view: ViewState) => {
+    setCurrentViewInternal(view);
+    localStorage.setItem('currentView', view);
+  };
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [pendingDoc, setPendingDoc] = useState<PendingDocument | null>(null);
+  const [user, setUser] = useState<any>(null);
+  const isAuthenticated = !!user;
   const [customFolders, setCustomFolders] = useState<string[]>([]);
+  const addFolder = (folderName: string) => {
+    if (!folderName.trim()) return;
+
+  setCustomFolders(prev =>
+    prev.includes(folderName)
+      ? prev
+      : [...prev, folderName]
+  );
+  };
   const [aiUnits, setAiUnits] = useState(485); // Starting balance
   const [aiCredits, setAiCredits] = useState(142.50); // Starting balance in Rs
   const [aiUnitsUsed, setAiUnitsUsed] = useState(1245); // Seeded lifetime used
   const [aiCreditsUsed, setAiCreditsUsed] = useState(373.50); // Seeded lifetime used
   const [isPricingOpen, setIsPricingOpen] = useState(false);
   useEffect(() => {
-  fetchLiveDocuments();
-  }, []);
-  const addFolder = (folder: string) => {
-    setCustomFolders(prev => {
-      if (!prev.includes(folder) && !ALL_FOLDERS.includes(folder)) {
-        return [...prev, folder];
-      }
-      return prev;
-    });
-  };
+    const savedUser =
+      localStorage.getItem('user');
 
+    if (savedUser) {
+      try {
+        setUser(
+          JSON.parse(savedUser)
+        );
+      } catch (error) {
+        console.error(
+          'Failed to restore user',
+          error
+        );
+      }
+    }
+
+    fetchLiveDocuments();
+  }, []);
+  
   const setPricingOpen = (open: boolean) => setIsPricingOpen(open);
 
-  const login = () => setCurrentView('dashboard'); // Routes to Dashboard first
+  const login = (
+    token: string,
+    userData: any
+  ) => {
+    localStorage.setItem(
+      'token',
+      token
+    );
+
+    localStorage.setItem(
+      'user',
+      JSON.stringify(userData)
+    );
+
+    setUser(userData);
+
+    setCurrentView(
+      'dashboard'
+    );
+  }; // Routes to Dashboard first
   const logout = () => {
-    setCurrentView('login');
+    localStorage.removeItem(
+      'token'
+    );
+
+    localStorage.removeItem(
+      'user'
+    );
+
+    setUser(null);
+
+    setCurrentView(
+      'login'
+    );
+
     setPendingDoc(null);
   };
 
@@ -91,43 +154,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
 
     const mappedDocs: Document[] = docs.map(
-      (doc: any) => ({
-        _id: doc._id,
-        id: doc._id, // Standardize on MongoDB ID
+      (doc: any) => {
 
-        name: doc.originalName,
+        const filename =
+          doc.storagePath
+            ?.split(/[\\/]/)
+            .pop();
 
-        date: doc.createdAt
-          ? new Date(doc.createdAt)
-              .toISOString()
-              .split('T')[0]
-          : new Date().toISOString().split('T')[0],
+        const previewUrl =
+          filename
+            ? `http://localhost:8000/uploads/${encodeURIComponent(filename)}?v=${new Date(doc.updatedAt || Date.now()).getTime()}`
+            : undefined;
 
-        folder:
-          doc.vaultFolder || 'Uploads',
+        return {
+          _id: doc._id,
 
-        vaultCategory:
-          doc.vaultCategory,
+          id: doc._id,
 
-        vaultFolder:
-          doc.vaultFolder,
+          name:
+            doc.documentName ||
+            doc.originalName,
 
-        tags: doc.tags || [],
+          date: doc.createdAt
+            ? new Date(doc.createdAt)
+                .toISOString()
+                .split('T')[0]
+            : new Date()
+                .toISOString()
+                .split('T')[0],
 
-        entities:
-          doc.entities || [],
+          folder:
+            doc.vaultFolder ||
+            'Uploads',
 
-        docType:
-          doc.docType || 'Document',
+          vaultCategory:
+            doc.vaultCategory,
 
-        metadata:
-          doc.metadata || {},
+          vaultFolder:
+            doc.vaultFolder,
 
-        mimeType:
-          doc.mimeType,
+          tags:
+            doc.tags || [],
 
-        previewUrl: undefined,
-      })
+          entities:
+            doc.entities || [],
+
+          docType:
+            doc.docType ||
+            'Document',
+
+          metadata:
+            doc.metadata || {},
+
+          mimeType:
+            doc.mimeType,
+
+          previewUrl
+        };
+      }
     );
 
     setDocuments(mappedDocs);
@@ -222,6 +306,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       aiUnitsUsed,
       aiCreditsUsed,
       isPricingOpen,
+      user,
+      isAuthenticated,
+      addFolder,
       login,
       logout,
       goToDashboard,
@@ -231,7 +318,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       goToEntity,
       setPendingDocument,
       saveDocument,
-      addFolder,
       setPricingOpen,
       fetchLiveDocuments,
     }}>

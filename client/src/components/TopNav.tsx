@@ -8,12 +8,12 @@ export function TopNav({ activeTab }: { activeTab?: 'hub' | 'archive' | 'tree' |
 
   return (
     <header className="px-6 py-4 flex items-center justify-between border-b border-gray-100 bg-white/80 backdrop-blur-xl sticky top-0 z-50 w-full">
-      <div className="flex items-center gap-10">
-        <div className="flex items-center gap-3 cursor-pointer group" onClick={goToDashboard}>
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-6 cursor-pointer group" onClick={goToDashboard}>
           <div className="w-10 h-10 bg-gray-900 rounded-2xl flex items-center justify-center text-white group-hover:scale-105 transition-all duration-500 shadow-xl shadow-gray-200">
              <FileBox size={22} strokeWidth={2.5} />
           </div>
-          <span className="text-xl font-black tracking-tighter text-gray-900 leading-none">AUTO-FILE <span className="text-blue-600">AI</span></span>
+          <span className="text-xl font-black tracking-tighter text-gray-900 leading-none">DMS</span>
         </div>
         
         <nav className="flex items-center gap-1 overflow-x-auto scrollbar-hide">

@@ -106,6 +106,25 @@ export const processDocument = async (
   return data.document;
 };
 
+export const rotateDocument = async (
+  documentId: string,
+  rotation: number
+): Promise<{ success: boolean; rotation: number }> => {
+  const response = await fetch(`${API_BASE}/${documentId}/rotate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ rotation }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Rotation failed');
+  }
+
+  return response.json();
+};
+
 export const deleteDocument = async (
   documentId: string
 ): Promise<void> => {

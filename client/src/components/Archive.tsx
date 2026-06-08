@@ -6,7 +6,7 @@ import React, {
 import { useApp } from '../context/AppContext';
 import { Document } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, Plus, FolderOpen, FileText, Calendar, Search, LogOut, Tag as TagIcon, X, User, Check, SlidersHorizontal, Trash2, Share2, LayoutGrid, List } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, FolderOpen, FileText, Calendar, Search, LogOut, Tag as TagIcon, X, User, Check, SlidersHorizontal, Trash2, Share2, LayoutGrid, List, Sparkles } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
 import { TopNav } from './TopNav';
 import { shareDocument } from '../lib/shareUtils';
@@ -28,6 +28,7 @@ export function Archive() {
 
   // Viewer state
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
 
   // Mobile sidebar toggle - NOW USED FOR DESKTOP TOO (hidden by default)
   const [showFilters, setShowFilters] = useState(false);
@@ -299,16 +300,24 @@ export function Archive() {
                     <p className="text-gray-500">Try adjusting your filters or expanding your search.</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5">
-                  <AnimatePresence>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5 items-start">
+                  <AnimatePresence mode="sync">
                     {filteredDocs.map(doc => (
-                      <motion.div key={doc.id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2 }}>
+                      <motion.div key={doc._id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2 }}>
                         <DocCard 
                           doc={doc} 
+                          isExpanded={!!doc._id && expandedDocId === doc._id}
+                          onToggleExpand={() => {
+                            console.log("CARD CLICK", doc._id);
+                            doc._id && setExpandedDocId(expandedDocId === doc._id ? null : doc._id);
+                          }}
                           onTagClick={(t) => toggleSet(setSelectedTags, t, true)}
                           onEntityClick={(e) => toggleSet(setSelectedEntities, e, true)}
                           onFolderClick={(f) => toggleSet(setSelectedFolders, f as string, true)}
-                          onView={() => setViewingDoc(doc)}
+                          onView={() => {
+                          console.log("CLICKED DOC", doc);
+                          setViewingDoc(doc);
+                          }}
                         />
                       </motion.div>
                     ))}
@@ -369,8 +378,8 @@ export function Archive() {
                  )}
                </div>
                
-               <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh]">
-                  <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8">{viewingDoc.name}</h2>
+               <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh] break-words">
+                  <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8 break-words">{viewingDoc.name}</h2>
                   
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
@@ -483,13 +492,24 @@ const ActiveChip: React.FC<{ label: string, icon?: React.ReactNode, onRemove: ()
 // Reusable Document Card Component
 const DocCard: React.FC<{ 
   doc: Document, 
+  isExpanded?: boolean,
+  onToggleExpand?: () => void,
   onTagClick: (tag: string) => void,
   onEntityClick: (entity: string) => void,
   onFolderClick: (folder: string) => void,
   onView: () => void
-}> = ({ doc, onTagClick, onEntityClick, onFolderClick, onView }) => {
+}> = ({ doc, isExpanded, onToggleExpand, onTagClick, onEntityClick, onFolderClick, onView }) => {
+
+  const summary = doc.metadata?.aiSummary;
+  
   return (
-    <div className="bg-white border border-gray-100 rounded-[20px] shadow-[0_2px_8px_rgb(0,0,0,0.02)] hover:shadow-[0_8px_24px_rgb(0,0,0,0.06)] hover:border-gray-300 transition-all group flex flex-col justify-between p-5 h-full cursor-pointer relative" onClick={onView}>
+    <div 
+      className={cn(
+        "bg-white border rounded-[20px] shadow-[0_2px_8px_rgb(0,0,0,0.02)] hover:shadow-[0_8px_24px_rgb(0,0,0,0.06)] transition-all group flex flex-col p-5 cursor-pointer relative overflow-hidden",
+        isExpanded ? "border-blue-500 ring-2 ring-blue-500/10 z-10" : "border-gray-100 hover:border-gray-300"
+      )} 
+      onClick={onToggleExpand}
+    >
       
       {/* Share Button Overlay */}
       <button 
@@ -500,13 +520,19 @@ const DocCard: React.FC<{
       </button>
 
       {/* Top Section */}
-      <div className="flex items-start gap-4 mb-4">
+      <div className="flex items-start gap-4 mb-2">
         {doc.previewUrl && (!doc.mimeType || doc.mimeType.startsWith('image/')) ? (
-           <div className="w-14 h-14 bg-gray-50 rounded-[14px] overflow-hidden shrink-0 border border-gray-100 shadow-sm">
+           <div 
+             className="w-14 h-14 bg-gray-50 rounded-[14px] overflow-hidden shrink-0 border border-gray-100 shadow-sm cursor-zoom-in"
+             onClick={(e) => { e.stopPropagation(); onView(); }}
+           >
              <img src={doc.previewUrl} className="w-full h-full object-cover" alt="" />
            </div>
         ) : doc.previewUrl && doc.mimeType === 'application/pdf' ? (
-           <div className="w-14 h-14 bg-gray-50 rounded-[14px] overflow-hidden shrink-0 border border-gray-100 shadow-sm relative pointer-events-none">
+           <div 
+             className="w-14 h-14 bg-gray-50 rounded-[14px] overflow-hidden shrink-0 border border-gray-100 shadow-sm relative pointer-events-none cursor-zoom-in"
+             onClick={(e) => { e.stopPropagation(); onView(); }}
+           >
              <object data={doc.previewUrl + '#toolbar=0&navpanes=0&scrollbar=0'} type="application/pdf" className="w-[400px] h-[400px] absolute top-[-100px] left-[-100px] origin-[30%_30%] scale-[0.15]">
                <div className="w-full h-full flex items-center justify-center text-red-500">
                  <FileText size={24} />
@@ -515,65 +541,144 @@ const DocCard: React.FC<{
              <span className="absolute bottom-1 right-1 text-[8px] font-black uppercase text-red-600 bg-white/90 border border-red-100 rounded px-1">PDF</span>
            </div>
         ) : (
-           <div className="w-14 h-14 rounded-[14px] flex items-center justify-center text-gray-500 shrink-0 bg-gray-50 border border-gray-100 shadow-sm">
+           <div 
+             className="w-14 h-14 rounded-[14px] flex items-center justify-center text-gray-500 shrink-0 bg-gray-50 border border-gray-100 shadow-sm cursor-zoom-in"
+             onClick={(e) => { e.stopPropagation(); onView(); }}
+           >
               <FileText size={24} />
            </div>
         )}
         <div className="flex-1 min-w-0 pt-0.5">
-           <h4 className="font-bold text-gray-900 text-[15px] truncate group-hover:text-blue-600 transition-colors mb-2">{doc.name}</h4>
+           <h4 className={cn("font-bold text-gray-900 text-[15px] truncate transition-colors mb-2", isExpanded ? "text-blue-600" : "group-hover:text-blue-600")}>{doc.name}</h4>
            
            <div className="flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
-             <div className="flex items-center gap-2">
-               {doc.entities && doc.entities.map(ent => (
-                 <button key={ent} onClick={() => onEntityClick(ent)} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 font-semibold hover:bg-purple-100 hover:scale-105 transition-all">
-                    <User size={10} strokeWidth={2.5}/> {ent}
+             <div className="flex items-center gap-2 flex-wrap">
+               {doc.entities && doc.entities.slice(0, 2).map((ent, index) => (
+                 <button 
+                    key={`${ent}-${index}`} 
+                    onClick={() => onEntityClick(ent)} 
+                    title={ent}
+                    className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 font-semibold hover:bg-purple-100 hover:scale-105 transition-all max-w-[100px] sm:max-w-[130px]"
+                 >
+                    <User size={10} strokeWidth={2.5} className="shrink-0"/> 
+                    <span className="truncate">{ent}</span>
                  </button>
                ))}
+               {!isExpanded && doc.entities && doc.entities.length > 2 && (
+                 <div className="relative group/ent flex items-center">
+                    <span className="text-[10px] font-bold text-gray-400 cursor-help px-1 hover:text-gray-600 transition-colors">
+                      +{doc.entities.length - 2} more
+                    </span>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/ent:block bg-gray-900/80 backdrop-blur-sm p-3 rounded-[16px] z-20 shadow-xl w-max max-w-[20rem] text-left">
+                      <div className="flex flex-col gap-2">
+                        {doc.entities.slice(2).map((ent, idx) => (
+                          <button 
+                            key={`${ent}-${idx}`} 
+                            onClick={(e) => { e.stopPropagation(); onEntityClick(ent); }}
+                            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-md bg-purple-50 text-purple-700 font-semibold hover:bg-white hover:scale-[1.03] transition-all whitespace-normal text-left shadow-sm"
+                          >
+                            <User size={10} strokeWidth={2.5} className="shrink-0" />
+                            <span>{ent}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                    </div>
+                 </div>
+               )}
+             </div>
+             <div className="flex items-center justify-between">
                <button onClick={() => onFolderClick(doc.folder)} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 hover:scale-105 transition-all">
                   <FolderOpen size={10} strokeWidth={2.5} /> {doc.folder}
                </button>
+               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">{doc.docType}</span>
              </div>
-             
-             <span className="flex items-center gap-1 text-[11px] text-gray-400 font-medium pl-1 mt-1">
-               <Calendar size={12} className="text-gray-300" /> Uploaded {doc.date}
-             </span>
            </div>
         </div>
       </div>
-      
-      {/* Metadata Section */}
-      {doc.metadata && Object.keys(doc.metadata).length > 0 && Object.values(doc.metadata).some(isValidMetadata) && (
-        <div className="bg-gray-50 rounded-xl p-3 mb-4 grid grid-cols-2 gap-2 mt-auto">
-           {Object.entries(doc.metadata).map(([key, val]) => isValidMetadata(val) ? (
-             <div key={key}>
-               <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-widest">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-               <span className="block text-[11px] font-semibold text-gray-700 truncate">{val}</span>
-             </div>
-           ) : null)}
-        </div>
-      )}
 
-      {/* Tags Section */}
-      {doc.tags && doc.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pt-3 border-t border-gray-100 mt-auto" onClick={e => e.stopPropagation()}>
-          {doc.tags.map(tag => {
-            const isUrgent = tag.toLowerCase().includes('expire') || tag.toLowerCase().includes('renew') || tag.toLowerCase().includes('due');
-            return (
-              <button 
-                key={tag} 
-                onClick={() => onTagClick(tag)}
-                className={cn(
-                  "px-2 py-1 rounded-[6px] font-semibold hover:scale-[1.03] transition-all flex items-center gap-1",
-                  "text-[10px]",
-                  isUrgent 
-                    ? "bg-red-50/80 text-red-600 border border-red-100 hover:bg-red-100" 
-                    : "bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100 hover:text-gray-900"
-                )}
-              >
-                <TagIcon size={10} /> {tag}
-              </button>
-            )
-          })}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="pt-5 space-y-6 border-t border-gray-100 mt-2" onClick={e => e.stopPropagation()}>
+              
+              {/* Summary */}
+              {summary && typeof summary === 'string' && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Summary</span>
+                  <p className="text-[13px] text-gray-600 leading-relaxed line-clamp-3">
+                    {summary}
+                  </p>
+                </div>
+              )}
+
+              {/* Tags */}
+              {Array.isArray(doc.tags) && doc.tags.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Tags</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {doc.tags.map((tag, idx) => typeof tag === 'string' && (
+                      <span key={`${tag}-${idx}`} className="px-2 py-1 bg-gray-50 text-gray-500 text-[10px] font-bold rounded-md border border-gray-100">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Entities */}
+              {Array.isArray(doc.entities) && doc.entities.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Entities</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {doc.entities.map((ent, idx) => (
+                      <button 
+                        key={`${ent}-${idx}`} 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEntityClick(ent);
+                        }}
+                        className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-md bg-gray-50 text-gray-700 font-bold border border-gray-100 hover:bg-gray-200 transition-colors"
+                      >
+                        <User size={10} strokeWidth={3} className="text-gray-400" />
+                        <span>{ent}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Link */}
+              <div className="pt-2 flex justify-end border-t border-gray-100">
+                <button 
+                  onClick={(e) => { e.stopPropagation(); onView(); }}
+                  className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                >
+                  Open Original <ChevronRight size={14} />
+                </button>
+              </div>
+
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {!isExpanded && (
+        <div className="mt-2 flex items-center justify-between">
+           <span className="text-[10px] text-gray-400 font-bold uppercase flex items-center gap-1">
+             <Calendar size={12} className="text-gray-300" /> {doc.date}
+           </span>
+           <div className="flex gap-1">
+              {doc.tags && doc.tags.slice(0, 2).map(t => (
+                <span key={t} className="w-1.5 h-1.5 rounded-full bg-gray-200"></span>
+              ))}
+           </div>
         </div>
       )}
     </div>

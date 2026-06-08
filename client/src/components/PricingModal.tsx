@@ -42,7 +42,7 @@ export function PricingModal({ isOpen, onClose }: PricingModalProps) {
                      <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white">
                         <Zap size={18} />
                      </div>
-                     <span className="font-bold tracking-tight">Auto-File AI</span>
+                     <span className="font-bold tracking-tight">DMS</span>
                   </div>
 
                   <h2 className="text-3xl font-bold leading-tight mb-6">Power your digital organization with Neural Intelligence.</h2>

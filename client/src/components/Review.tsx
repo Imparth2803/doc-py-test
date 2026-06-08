@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { motion } from 'motion/react';
-import { FileText, X, Plus, Save, ChevronLeft, Sparkles, FolderOpen } from 'lucide-react';
+import { FileText, X, Plus, Save, ChevronLeft, Sparkles, FolderOpen, RotateCcw, RotateCw, RefreshCcw } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
+import { rotateDocument as apiRotateDocument } from '../services/documentApi';
 
 export function Review() {
   const { pendingDoc, saveDocument, setPendingDocument, customFolders, addFolder, aiUnits, setPricingOpen } = useApp();
@@ -14,6 +15,7 @@ export function Review() {
   const [tags, setTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
   const [metadata, setMetadata] = useState<Record<string, string | undefined>>({});
+  const [rotation, setRotation] = useState(0);
 
   const [customFolder, setCustomFolder] = useState('');
   const [isCreatingNewFolder, setIsCreatingNewFolder] = useState(false);
@@ -23,8 +25,7 @@ export function Review() {
 
   useEffect(() => {
     if (pendingDoc?.aiResult) {
-      setDocName(pendingDoc.aiResult.originalName || pendingDoc.file.name);
-      
+      setDocName(pendingDoc.aiResult.documentName || pendingDoc.aiResult.suggestedFilename || pendingDoc.file.name);      
       const { entities: resEnt, docType: resFold } = pendingDoc.aiResult;
       
       if ((resEnt && resEnt.length > 0 && resEnt[0] === 'UNKNOWN') || resFold === 'UNKNOWN') {
@@ -37,7 +38,8 @@ export function Review() {
       }
       
       setTags(pendingDoc.aiResult.tags || []);
-      setMetadata(pendingDoc.aiResult.metadata || {});
+      const { summaryFields, ...restMetadata } = pendingDoc.aiResult.metadata || {};
+      setMetadata(restMetadata);
     } else if (pendingDoc) {
       setDocName(pendingDoc.file.name);
       setEntitiesStr('');
@@ -59,15 +61,52 @@ export function Review() {
   
   const creditCost = unitsUsed * 0.30; // ₹0.30 per unit
 
-  const handleSave = () => {
+  const handleSave = async () => {
     let finalFolder = folder;
     if (isCreatingNewFolder && customFolder.trim()) {
        finalFolder = customFolder.trim();
        addFolder(finalFolder);
     }
     const finalEntities = entitiesStr.split(',').map(s => s.trim()).filter(Boolean);
-    saveDocument(docName || pendingDoc.file.name, finalFolder, tags, pendingDoc.base64Data, finalEntities, finalFolder, metadata, unitsUsed, creditCost, pendingDoc.mimeType);
+
+    let finalPreviewUrl = pendingDoc.serverUrl || pendingDoc.base64Data;
+
+    // Apply backend rotation if user changed it visually
+    if (rotation !== 0 && pendingDoc.aiResult?._id) {
+       // Normalize rotation to 90, 180, 270 backend equivalents
+       let normalized = rotation % 360;
+       if (normalized < 0) normalized += 360;
+       
+       if (normalized !== 0) {
+         try {
+           await apiRotateDocument(pendingDoc.aiResult._id, normalized);
+           // Cache bust to force browser to load newly rotated image
+           if (pendingDoc.serverUrl) {
+             finalPreviewUrl = `${pendingDoc.serverUrl}?v=${Date.now()}`;
+           }
+         } catch (err) {
+           console.error("Failed to rotate document on backend", err);
+         }
+       }
+    }
+
+    saveDocument(docName || pendingDoc.file.name, finalFolder, tags, finalPreviewUrl, finalEntities, finalFolder, metadata, unitsUsed, creditCost, pendingDoc.mimeType);
   };
+
+  const finalMetadata = {
+   ...metadata,
+   ...(pendingDoc.aiResult?.metadata?.summaryFields
+      ? {
+         summaryFields:
+            pendingDoc.aiResult.metadata.summaryFields
+         }
+      : {})
+   };
+
+   console.log(
+   "[SAVE_SUMMARY_FIELDS]",
+   finalMetadata.summaryFields
+   );
 
   const handleRemoveTag = (indexToRemove: number) => {
     setTags(tags.filter((_, i) => i !== indexToRemove));
@@ -104,11 +143,29 @@ export function Review() {
         <div className="w-full bg-white rounded-[32px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex flex-col lg:flex-row border border-gray-100">
            
            {/* Left side: Preview */}
-           <div className="w-full lg:w-1/2 bg-gray-50 p-8 flex items-center justify-center border-b lg:border-b-0 lg:border-r border-gray-100 min-h-[400px]">
+           <div className="w-full lg:w-1/2 bg-gray-50 p-8 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-gray-100 min-h-[400px] relative">
+              {isImage && (
+                <div className="absolute top-4 right-4 flex items-center gap-2 bg-white/80 backdrop-blur-md p-1.5 rounded-xl border border-gray-200 shadow-sm z-10">
+                  <button onClick={() => setRotation(r => r - 90)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors" title="Rotate Left">
+                    <RotateCcw size={18} />
+                  </button>
+                  <button onClick={() => setRotation(0)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors" title="Reset Rotation">
+                    <RefreshCcw size={16} />
+                  </button>
+                  <button onClick={() => setRotation(r => r + 90)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors" title="Rotate Right">
+                    <RotateCw size={18} />
+                  </button>
+                </div>
+              )}
               {isImage ? (
-                 <img src={pendingDoc.base64Data} alt="Document Preview" className="max-w-full max-h-[600px] object-contain rounded-xl shadow-sm border border-gray-200" />
+                 <img 
+                    src={pendingDoc.serverUrl || pendingDoc.base64Data} 
+                    alt="Document Preview" 
+                    style={{ transform: `rotate(${rotation}deg)`, transition: 'transform 0.3s ease-out' }}
+                    className="max-w-full max-h-[600px] object-contain rounded-xl shadow-sm border border-gray-200" 
+                 />
               ) : pendingDoc.mimeType === 'application/pdf' ? (
-                 <object data={pendingDoc.base64Data} type="application/pdf" className="w-full h-full min-h-[500px] rounded-xl shadow-sm border border-gray-200">
+                 <object data={ pendingDoc.serverUrl || pendingDoc.base64Data } type="application/pdf" className="w-full h-full min-h-[500px] rounded-xl shadow-sm border border-gray-200">
                     <div className="flex flex-col items-center justify-center p-8 text-gray-400">
                       <FileText size={64} className="mb-4" />
                       <p className="text-sm mt-1">Preview not available in this browser. File saved successfully.</p>
@@ -284,6 +341,20 @@ export function Review() {
                    </select>
                  )}
               </div>
+
+              {pendingDoc.aiResult?.metadata?.summaryFields && Object.keys(pendingDoc.aiResult.metadata.summaryFields).length > 0 && (
+                 <div className="mb-6 bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                    <label className="block text-sm font-bold text-gray-800 mb-3">Summary Fields</label>
+                    <div className="grid grid-cols-2 gap-4">
+                      {Object.entries(pendingDoc.aiResult.metadata.summaryFields).map(([key, val]) => (
+                         <div key={key}>
+                            <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">{key}</span>
+                            <span className="font-medium text-gray-900 block">{String(val)}</span>
+                         </div>
+                      ))}
+                    </div>
+                 </div>
+              )}
 
               {Object.keys(metadata).length > 0 && Object.values(metadata).some(isValidMetadata) && (
                  <div className="mb-8 bg-blue-50/50 p-5 rounded-2xl border border-blue-100/50">

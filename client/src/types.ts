@@ -43,6 +43,6 @@ export type Document = {
   mimeType?: string;
   entities: string[];
   docType?: string;
-  metadata?: Record<string, string | undefined>;
+  metadata?: Record<string, any>;
 };
 

@@ -1,4 +1,6 @@
 import React from 'react';
+import { GoogleLogin } from '@react-oauth/google';
+import axios from 'axios';
 import { useApp } from '../context/AppContext';
 import { motion } from 'motion/react';
 import { FileStack, Sparkles } from 'lucide-react';
@@ -20,7 +22,7 @@ export function Login() {
           </div>
           
           <h1 className="text-4xl font-bold tracking-tight text-gray-900 mb-3">
-            Life-Sync
+            DMS
           </h1>
           <p className="text-gray-500 mb-8 leading-relaxed text-base max-w-[280px]">
             The smarter way to organize your life's paperwork.
@@ -38,18 +40,52 @@ export function Login() {
             </div>
           </div>
 
-          <button 
-            onClick={login}
-            className="w-full flex items-center justify-center gap-3 bg-gray-900 hover:bg-gray-800 text-white py-4 px-6 rounded-2xl font-semibold transition-all active:scale-[0.98] shadow-lg shadow-gray-200"
-          >
-            Sign in with Google
-          </button>
+          <div className="w-full flex justify-center">
+            <GoogleLogin
+              onSuccess={async credentialResponse => {
+              try {
+                console.log(
+                  'Credential:',
+                  credentialResponse.credential
+                );
+
+                const response =
+                  await axios.post(
+                    'http://localhost:8000/api/auth/google',
+                    {
+                      credential:
+                        credentialResponse.credential,
+                    }
+                  );
+
+                console.log(
+                  'Backend Response:',
+                  response.data
+                );
+
+                login(
+                  response.data.token,
+                  response.data.user
+                );
+              } catch (error) {
+                console.error(
+                  'Google Login Failed',
+                  error
+                );
+              }
+            }}
+              onError={() =>
+                console.log(
+                  'Login Failed'
+                )
+              }
+            />
+          </div>
+          <div className="mt-8 text-center text-xs text-gray-400">
+            Secure, structured, and private.
+          </div>
         </div>
-        
-        <div className="mt-8 text-center text-xs text-gray-400">
-          Secure, structured, and private.
-        </div>
-      </motion.div>
-    </div>
-  );
+        </motion.div>
+      </div>
+    );
 }

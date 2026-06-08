@@ -3,12 +3,35 @@ import { Document } from '../types';
 
 export const mapApiDocumentToDocument = (
   doc: ApiDocument
-): Document => ({
+): Document => {
+  const filename =
+    doc.storagePath
+        ?.split(/[\\/]/)
+        .pop();
+
+  const previewUrl =
+    filename
+    ? `http://localhost:8000/uploads/${encodeURIComponent(filename)}`
+    : '';
+
+    console.log(
+    "MAPPING",
+    doc.originalName,
+    doc.storagePath
+    );
+
+    console.log(
+    "PREVIEW URL GENERATED",
+    previewUrl
+    );
+
+  return {
     id: doc._id,
-    name: doc.originalName,
+    name: doc.documentName || doc.originalName,
+
     date: doc.createdAt
-        ? doc.createdAt.split('T')[0]
-        : new Date().toISOString().split('T')[0],
+      ? doc.createdAt.split('T')[0]
+      : new Date().toISOString().split('T')[0],
 
     folder: 'Uploads',
 
@@ -16,13 +39,16 @@ export const mapApiDocumentToDocument = (
 
     entities: doc.entities || [],
 
-    docType: doc.mimeType?.split('/')[1] ||
-        'Document',
+    docType:
+      doc.mimeType?.split('/')[1] ||
+      'Document',
 
     metadata: doc.metadata || {},
 
     mimeType: doc.mimeType,
 
-    previewUrl: '',
-    _id: ''
-});
+    previewUrl,
+
+    _id: doc._id
+  };
+};

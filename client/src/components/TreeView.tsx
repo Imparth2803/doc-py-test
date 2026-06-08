@@ -1,9 +1,9 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { TopNav } from './TopNav';
 import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles } from 'lucide-react';
+import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles, Search } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
 import { uploadDocument, processDocument } from '../services/documentApi';
 import { shareDocument } from '../lib/shareUtils';
@@ -14,6 +14,12 @@ export function TreeView() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedEntities, setExpandedEntities] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
+  const [savedExpansion, setSavedExpansion] = useState<{
+    categories: Set<string>;
+    folders: Set<string>;
+    entities: Set<string>;
+  } | null>(null);
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -106,6 +112,54 @@ export function TreeView() {
     });
   };
 
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      if (savedExpansion) {
+        setExpandedCategories(savedExpansion.categories);
+        setExpandedFolders(savedExpansion.folders);
+        setExpandedEntities(savedExpansion.entities);
+        setSavedExpansion(null);
+      }
+      return;
+    }
+
+    // Save current manual state before applying search expansion
+    if (!savedExpansion) {
+      setSavedExpansion({
+        categories: new Set(expandedCategories),
+        folders: new Set(expandedFolders),
+        entities: new Set(expandedEntities),
+      });
+    }
+
+    const newCats = new Set<string>();
+    const newFolders = new Set<string>();
+    const newEntities = new Set<string>();
+
+    documents.forEach(doc => {
+      if (doc.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+        const folder = doc.vaultFolder || 'Unsorted';
+        const entities = doc.entities && doc.entities.length ? doc.entities : ['General'];
+        
+        entities.forEach(ent => {
+          newEntities.add(`${folder}-${ent}`);
+        });
+        newFolders.add(folder);
+
+        for (const [cat, folders] of Object.entries(FOLDER_TEMPLATES)) {
+          if ((folders as string[]).includes(folder)) {
+            newCats.add(cat);
+            break;
+          }
+        }
+      }
+    });
+
+    setExpandedCategories(newCats);
+    setExpandedFolders(newFolders);
+    setExpandedEntities(newEntities);
+  }, [searchTerm, documents]);
+
   const treeData = useMemo(() => {
     const rootMap = new Map<string, Map<string, Document[]>>();
     
@@ -115,7 +169,11 @@ export function TreeView() {
        rootMap.set(f, new Map());
     });
     
-    documents.forEach(doc => {
+    const filteredDocs = searchTerm.trim() 
+      ? documents.filter(doc => doc.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      : documents;
+
+    filteredDocs.forEach(doc => {
       const folder = doc.vaultFolder || 'Unsorted';
       const entities = doc.entities && doc.entities.length ? doc.entities : ['General'];
       
@@ -127,21 +185,23 @@ export function TreeView() {
          folderMap.get(entity)!.push(doc);
       });
     });
-    console.log(
-      "TREE DATA",
-      documents.map(d => ({
-         name: d.name,
-         folder: d.folder,
-         vaultFolder: d.vaultFolder,
-         category: d.vaultCategory,
-         entities: d.entities
-      }))
-      );
-    console.log("ROOT MAP", rootMap);
+
+    // Remove empty folders if searching
+    if (searchTerm.trim()) {
+      for (const [folder, entityMap] of rootMap.entries()) {
+        if (entityMap.size === 0) {
+          rootMap.delete(folder);
+        }
+      }
+    }
+
     return rootMap;
-  }, [documents, customFolders]);
+  }, [documents, customFolders, searchTerm]);
 
   const categories = Object.keys(FOLDER_TEMPLATES);
+
+  // Check if any documents exist in tree
+  const hasResults = Array.from(treeData.values()).some(entMap => entMap.size > 0);
 
   return (
     <div className="min-h-screen bg-[#fafafc] flex flex-col font-sans relative pb-24">
@@ -166,10 +226,27 @@ export function TreeView() {
            <p className="text-gray-500">Structural DMS view of all your organized document clusters.</p>
          </div>
 
+         <div className="relative mb-6">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input 
+               type="text"
+               placeholder="Search document names..."
+               value={searchTerm}
+               onChange={(e) => setSearchTerm(e.target.value)}
+               className="w-full bg-white border border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none font-medium shadow-sm"
+            />
+         </div>
+
          <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm p-4 sm:p-6 overflow-hidden">
             <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept=".pdf,image/*" />
             
-            {categories.map((catKey) => {
+            {!hasResults && searchTerm.trim() ? (
+               <div className="py-20 text-center text-gray-400 font-medium">
+                  No documents found for "<span className="text-gray-600 font-bold">{searchTerm}</span>"
+               </div>
+            ) : (
+               <>
+                 {categories.map((catKey) => {
                // Get folders for this category
                const catFolders = (FOLDER_TEMPLATES as any)[catKey] as string[];
                const isCatExpanded = expandedCategories.has(catKey);
@@ -401,6 +478,8 @@ export function TreeView() {
                   })}
                </div>
             )}
+               </>
+            )}
          </div>
       </main>
 
@@ -446,8 +525,8 @@ export function TreeView() {
                  )}
                </div>
                
-               <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh]">
-                  <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8">{viewingDoc.name}</h2>
+               <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh] break-words">
+                  <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8 break-words">{viewingDoc.name}</h2>
 
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">

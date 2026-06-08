@@ -35,6 +35,15 @@ export function Upload() {
     // Trigger backend AI processing
     const processedDoc = await processDocument(uploadedDoc._id);
 
+    const storagePath = processedDoc.storagePath || "";
+
+    const filename = storagePath.split(/[\\/]/).pop();
+
+    const serverUrl =
+      filename
+        ? `http://localhost:8000/uploads/${encodeURIComponent(filename)}`
+        : undefined;
+
     console.log('Processing complete:', processedDoc);
 
     // Refresh documents from backend (swallow error so we can still get to Review)
@@ -56,6 +65,7 @@ export function Upload() {
     setPendingDocument({
       file,
       base64Data: base64,
+      serverUrl,
       mimeType: file.type,
       aiResult: processedDoc
     });

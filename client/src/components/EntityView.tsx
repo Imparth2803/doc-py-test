@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { TopNav } from './TopNav';
 import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles } from 'lucide-react';
+import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles, Search } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
 import { uploadDocument, processDocument } from '../services/documentApi';
 import { shareDocument } from '../lib/shareUtils';
@@ -14,6 +14,7 @@ export function EntityView() {
   // state to track expanded categories and entities
   const [expandedEntities, setExpandedEntities] = useState<Set<string>>(new Set());
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -130,8 +131,19 @@ export function EntityView() {
     });
   });
 
+  // Filter rootMap based on searchTerm
+  if (searchTerm.trim()) {
+    const filteredMap = new Map<string, Map<string, Document[]>>();
+    for (const [entity, folderMap] of rootMap.entries()) {
+      if (entity.toLowerCase().includes(searchTerm.toLowerCase())) {
+        filteredMap.set(entity, folderMap);
+      }
+    }
+    return filteredMap;
+  }
+
   return rootMap;
-  }, [documents, customFolders]);
+  }, [documents, customFolders, searchTerm]);
 
   return (
     <div className="min-h-screen bg-[#fafafc] flex flex-col font-sans relative pb-24">
@@ -156,11 +168,28 @@ export function EntityView() {
            <p className="text-gray-500">Cross-reference map strictly grouped by Entity, then Folder.</p>
          </div>
 
+         <div className="relative mb-6">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input 
+               type="text"
+               placeholder="Search entities..."
+               value={searchTerm}
+               onChange={(e) => setSearchTerm(e.target.value)}
+               className="w-full bg-white border border-gray-100 rounded-2xl py-4 pl-12 pr-4 text-gray-900 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all outline-none font-medium shadow-sm"
+            />
+         </div>
+
          <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm p-4 sm:p-6 overflow-hidden">
             <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept=".pdf,image/*" />
 
             {treeData.size === 0 && (
-               <div className="py-20 text-center text-gray-400 font-medium">No documents organized yet.</div>
+               <div className="py-20 text-center text-gray-400 font-medium">
+                 {searchTerm.trim() ? (
+                   <span>No entities found for "<span className="text-gray-600 font-bold">{searchTerm}</span>"</span>
+                 ) : (
+                   "No documents organized yet."
+                 )}
+               </div>
             )}
             {Array.from(treeData.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([ent, foldersMap]) => {
                 const isEntExpanded = expandedEntities.has(ent);
@@ -309,8 +338,8 @@ export function EntityView() {
                  )}
                </div>
                
-               <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh]">
-                  <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8">{viewingDoc.name}</h2>
+               <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh] break-words">
+                  <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8 break-words">{viewingDoc.name}</h2>
                   
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
