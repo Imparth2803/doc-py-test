@@ -7,7 +7,9 @@ export interface ApiDocument {
   mimeType: string;
   status: 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 
-  processingStrategy?: 'TEXT_ONLY' | 'VISION_FALLBACK' | 'PENDING';
+  processingStrategy?: 'DIGITAL_DOCUMENT' | 'SCANNED_DOCUMENT' | 'TEXT_ONLY' | 'VISION_FALLBACK' | 'PENDING';
+
+  extractedText?: string;
 
   docType?: string;
 

@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight, Plus, FolderOpen, FileText, Calendar, Search, LogOut, Tag as TagIcon, X, User, Check, SlidersHorizontal, Trash2, Share2, LayoutGrid, List, Sparkles } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
 import { TopNav } from './TopNav';
-import { shareDocument } from '../lib/shareUtils';
+import { ShareModal } from './ShareModal';
 
 export function Archive() {
   const {
@@ -30,6 +30,9 @@ export function Archive() {
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
 
+  // Share Modal State
+  const [shareDoc, setShareDoc] = useState<Document | null>(null);
+
   // Mobile sidebar toggle - NOW USED FOR DESKTOP TOO (hidden by default)
   const [showFilters, setShowFilters] = useState(false);
   useEffect(() => {
@@ -39,10 +42,10 @@ export function Archive() {
   // Omnisearch logic
   const searchedDocs = useMemo(() => {
     if (!searchQuery.trim()) return documents;
-    
+
     const tokens = searchQuery.toLowerCase().split(' ').filter(t => t.trim().length > 0);
     return documents.filter(doc => {
-      const docText = `${doc.name} ${doc.folder} ${(doc.entities || []).join(' ')} ${doc.docType || ''} ${(doc.tags || []).join(' ')}`.toLowerCase();
+      const docText = `${doc.name} ${doc.folder} ${(doc.entities || []).join(' ')} ${doc.docType || ''} ${(doc.tags || []).join(' ')} ${doc.extractedText || ''}`.toLowerCase();
       // Returns true if EVERY search token is found
       return tokens.every(token => docText.includes(token));
     });
@@ -304,8 +307,8 @@ export function Archive() {
                   <AnimatePresence mode="sync">
                     {filteredDocs.map(doc => (
                       <motion.div key={doc._id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2 }}>
-                        <DocCard 
-                          doc={doc} 
+                        <DocCard
+                          doc={doc}
                           isExpanded={!!doc._id && expandedDocId === doc._id}
                           onToggleExpand={() => {
                             console.log("CARD CLICK", doc._id);
@@ -318,7 +321,9 @@ export function Archive() {
                           console.log("CLICKED DOC", doc);
                           setViewingDoc(doc);
                           }}
+                          onShare={setShareDoc}
                         />
+
                       </motion.div>
                     ))}
                   </AnimatePresence>
@@ -356,7 +361,7 @@ export function Archive() {
                <button onClick={() => setViewingDoc(null)} className="absolute top-4 right-4 z-10 w-10 h-10 bg-white/50 backdrop-blur-md rounded-full flex items-center justify-center text-gray-800 hover:bg-white shadow-sm border border-gray-100 transition-colors">
                   <X size={20} />
                </button>
-               <button onClick={() => shareDocument(viewingDoc)} className="absolute top-4 right-16 z-10 w-10 h-10 bg-white/50 backdrop-blur-md rounded-full flex items-center justify-center text-gray-800 hover:bg-white shadow-sm border border-gray-100 transition-colors">
+               <button onClick={() => setShareDoc(viewingDoc)} className="absolute top-4 right-16 z-10 w-10 h-10 bg-white/50 backdrop-blur-md rounded-full flex items-center justify-center text-gray-800 hover:bg-white shadow-sm border border-gray-100 transition-colors">
                   <Share2 size={18} />
                </button>
 
@@ -405,12 +410,26 @@ export function Archive() {
                       <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100/50">
                         <span className="block text-sm font-bold text-gray-800 mb-3">Extracted Details</span>
                         <div className="grid grid-cols-2 gap-4">
-                          {Object.entries(viewingDoc.metadata).map(([key, val]) => isValidMetadata(val) ? (
+                          {Object.entries(viewingDoc.metadata).map(([key, val]) => (isValidMetadata(val) && key !== 'summaryFields') ? (
                              <div key={key}>
                                 <span className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
                                 <span className="font-medium text-gray-900">{val}</span>
                              </div>
                           ) : null)}
+                        </div>
+                      </div>
+                    )}
+
+                    {viewingDoc.metadata?.summaryFields && Object.keys(viewingDoc.metadata.summaryFields).length > 0 && (
+                      <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                        <span className="block text-sm font-bold text-gray-800 mb-3">Summary Fields</span>
+                        <div className="grid grid-cols-2 gap-4">
+                          {Object.entries(viewingDoc.metadata.summaryFields).map(([key, val]) => (
+                            <div key={key}>
+                              <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">{key}</span>
+                              <span className="font-medium text-gray-900 block">{String(val)}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -433,6 +452,11 @@ export function Archive() {
            </motion.div>
         )}
       </AnimatePresence>
+      <ShareModal 
+        isOpen={!!shareDoc} 
+        onClose={() => setShareDoc(null)} 
+        document={shareDoc} 
+      />
     </div>
   );
 }
@@ -497,9 +521,11 @@ const DocCard: React.FC<{
   onTagClick: (tag: string) => void,
   onEntityClick: (entity: string) => void,
   onFolderClick: (folder: string) => void,
-  onView: () => void
-}> = ({ doc, isExpanded, onToggleExpand, onTagClick, onEntityClick, onFolderClick, onView }) => {
+  onView: () => void,
+  onShare: (doc: Document) => void
+}> = ({ doc, isExpanded, onToggleExpand, onTagClick, onEntityClick, onFolderClick, onView, onShare }) => {
 
+  const [expandedEntities, setExpandedEntities] = useState(false);
   const summary = doc.metadata?.aiSummary;
   
   return (
@@ -513,7 +539,7 @@ const DocCard: React.FC<{
       
       {/* Share Button Overlay */}
       <button 
-        onClick={(e) => { e.stopPropagation(); shareDocument(doc); }}
+        onClick={(e) => { e.stopPropagation(); onShare(doc); }}
         className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-white/80 backdrop-blur-sm border border-gray-100 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-gray-50 text-gray-500 hover:text-gray-800"
       >
         <Share2 size={14} />
@@ -564,29 +590,47 @@ const DocCard: React.FC<{
                     <span className="truncate">{ent}</span>
                  </button>
                ))}
-               {!isExpanded && doc.entities && doc.entities.length > 2 && (
-                 <div className="relative group/ent flex items-center">
-                    <span className="text-[10px] font-bold text-gray-400 cursor-help px-1 hover:text-gray-600 transition-colors">
-                      +{doc.entities.length - 2} more
-                    </span>
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/ent:block bg-gray-900/80 backdrop-blur-sm p-3 rounded-[16px] z-20 shadow-xl w-max max-w-[20rem] text-left">
-                      <div className="flex flex-col gap-2">
-                        {doc.entities.slice(2).map((ent, idx) => (
-                          <button 
-                            key={`${ent}-${idx}`} 
-                            onClick={(e) => { e.stopPropagation(); onEntityClick(ent); }}
-                            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-md bg-purple-50 text-purple-700 font-semibold hover:bg-white hover:scale-[1.03] transition-all whitespace-normal text-left shadow-sm"
-                          >
-                            <User size={10} strokeWidth={2.5} className="shrink-0" />
-                            <span>{ent}</span>
-                          </button>
-                        ))}
-                      </div>
-                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
-                    </div>
-                 </div>
+               {!isExpanded && !expandedEntities && doc.entities && doc.entities.length > 2 && (
+                 <button 
+                    onClick={(e) => { e.stopPropagation(); setExpandedEntities(true); }}
+                    className="text-[10px] font-bold text-gray-400 px-1 hover:text-gray-600 transition-colors"
+                 >
+                   +{doc.entities.length - 2} more
+                 </button>
                )}
              </div>
+
+             <AnimatePresence>
+               {expandedEntities && (
+                 <motion.div 
+                   initial={{ height: 0, opacity: 0 }}
+                   animate={{ height: 'auto', opacity: 1 }}
+                   exit={{ height: 0, opacity: 0 }}
+                   className="overflow-hidden"
+                 >
+                   <div className="flex items-center gap-2 flex-wrap pt-1">
+                      {doc.entities?.slice(2).map((ent, index) => (
+                        <button 
+                           key={`${ent}-${index + 2}`} 
+                           onClick={() => onEntityClick(ent)} 
+                           title={ent}
+                           className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 font-semibold hover:bg-purple-100 hover:scale-105 transition-all max-w-[100px] sm:max-w-[130px]"
+                        >
+                           <User size={10} strokeWidth={2.5} className="shrink-0"/> 
+                           <span className="truncate">{ent}</span>
+                        </button>
+                      ))}
+                      <button 
+                         onClick={(e) => { e.stopPropagation(); setExpandedEntities(false); }}
+                         className="text-[10px] font-bold text-gray-400 px-1 hover:text-gray-600 transition-colors"
+                      >
+                         Show less
+                      </button>
+                   </div>
+                 </motion.div>
+               )}
+             </AnimatePresence>
+
              <div className="flex items-center justify-between">
                <button onClick={() => onFolderClick(doc.folder)} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 hover:scale-105 transition-all">
                   <FolderOpen size={10} strokeWidth={2.5} /> {doc.folder}

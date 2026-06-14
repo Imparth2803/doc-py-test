@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles, Search } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
 import { uploadDocument, processDocument } from '../services/documentApi';
-import { shareDocument } from '../lib/shareUtils';
+import { ShareModal } from './ShareModal';
 export function TreeView() {
   const { documents, customFolders, goToUpload, setPendingDocument, fetchLiveDocuments } = useApp();
 
@@ -21,6 +21,7 @@ export function TreeView() {
     entities: Set<string>;
   } | null>(null);
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
+  const [shareDoc, setShareDoc] = useState<Document | null>(null);
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -503,7 +504,7 @@ export function TreeView() {
                <button onClick={() => setViewingDoc(null)} className="absolute top-4 right-4 z-10 w-10 h-10 bg-white/50 backdrop-blur-md rounded-full flex items-center justify-center text-gray-800 hover:bg-white shadow-sm border border-gray-100 transition-colors">
                   <X size={20} />
                </button>
-               <button onClick={() => shareDocument(viewingDoc)} className="absolute top-4 right-16 z-10 w-10 h-10 bg-white/50 backdrop-blur-md rounded-full flex items-center justify-center text-gray-800 hover:bg-white shadow-sm border border-gray-100 transition-colors">
+               <button onClick={() => setShareDoc(viewingDoc)} className="absolute top-4 right-16 z-10 w-10 h-10 bg-white/50 backdrop-blur-md rounded-full flex items-center justify-center text-gray-800 hover:bg-white shadow-sm border border-gray-100 transition-colors">
                   <Share2 size={18} />
                </button>
 
@@ -552,12 +553,26 @@ export function TreeView() {
                       <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100/50">
                         <span className="block text-sm font-bold text-gray-800 mb-3">Extracted Details</span>
                         <div className="grid grid-cols-2 gap-4">
-                          {Object.entries(viewingDoc.metadata).map(([key, val]) => isValidMetadata(val) ? (
+                          {Object.entries(viewingDoc.metadata).map(([key, val]) => (isValidMetadata(val) && key !== 'summaryFields') ? (
                              <div key={key}>
                                 <span className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
                                 <span className="font-medium text-gray-900">{val}</span>
                              </div>
                           ) : null)}
+                        </div>
+                      </div>
+                    )}
+
+                    {viewingDoc.metadata?.summaryFields && Object.keys(viewingDoc.metadata.summaryFields).length > 0 && (
+                      <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                        <span className="block text-sm font-bold text-gray-800 mb-3">Summary Fields</span>
+                        <div className="grid grid-cols-2 gap-4">
+                          {Object.entries(viewingDoc.metadata.summaryFields).map(([key, val]) => (
+                            <div key={key}>
+                              <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">{key}</span>
+                              <span className="font-medium text-gray-900 block">{String(val)}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -580,6 +595,11 @@ export function TreeView() {
            </motion.div>
         )}
       </AnimatePresence>
+      <ShareModal 
+        isOpen={!!shareDoc} 
+        onClose={() => setShareDoc(null)} 
+        document={shareDoc} 
+      />
     </div>
   );
 }

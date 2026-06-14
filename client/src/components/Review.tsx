@@ -7,7 +7,7 @@ import { cn, isValidMetadata } from '../lib/utils';
 import { rotateDocument as apiRotateDocument } from '../services/documentApi';
 
 export function Review() {
-  const { pendingDoc, saveDocument, setPendingDocument, customFolders, addFolder, aiUnits, setPricingOpen } = useApp();
+  const { pendingDoc, saveDocument, setPendingDocument, customFolders, addFolder, aiUnits, setPricingOpen, goToDashboard } = useApp();
   
   const [docName, setDocName] = useState('');
   const [folder, setFolder] = useState('');
@@ -90,7 +90,7 @@ export function Review() {
        }
     }
 
-    saveDocument(docName || pendingDoc.file.name, finalFolder, tags, finalPreviewUrl, finalEntities, finalFolder, metadata, unitsUsed, creditCost, pendingDoc.mimeType);
+    saveDocument(docName || pendingDoc.file.name, finalFolder, tags, finalPreviewUrl, finalEntities, finalFolder, finalMetadata as any, unitsUsed, creditCost, pendingDoc.mimeType);
   };
 
   const finalMetadata = {
@@ -130,7 +130,10 @@ export function Review() {
        <header className="px-6 py-4 flex items-center justify-between border-b border-gray-100 bg-white/80 backdrop-blur-md sticky top-0 z-10 w-full">
          <div className="flex items-center gap-4">
           <button 
-            onClick={() => setPendingDocument(null)}
+            onClick={() => {
+              setPendingDocument(null);
+              goToDashboard();
+            }}
             className="w-10 h-10 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors text-gray-500"
           >
             <ChevronLeft size={24} />
@@ -406,7 +409,10 @@ export function Review() {
 
               <div className="pt-6 border-t border-gray-100 flex gap-4 mt-auto">
                  <button 
-                  onClick={() => setPendingDocument(null)}
+                  onClick={() => {
+                    setPendingDocument(null);
+                    goToDashboard();
+                  }}
                   className="px-6 py-3.5 rounded-xl text-gray-600 font-medium hover:bg-gray-100 transition-colors"
                  >
                    Cancel

@@ -8,7 +8,7 @@ import React, {
 import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { ApiDocument } from '../types/api';
 import { getDocuments, updateDocument } from '../services/documentApi';
-type ViewState = 'login' | 'dashboard' | 'upload' | 'review' | 'archive' | 'tree' | 'entity';
+type ViewState = 'login' | 'dashboard' | 'upload' | 'review' | 'archive' | 'tree' | 'entity' | 'timeline';
 import { mapApiDocumentToDocument } from '../utils/documentMapper';
 
 export interface PendingDocument {
@@ -40,6 +40,7 @@ interface AppState {
   goToArchive: () => void;
   goToTree: () => void;
   goToEntity: () => void;
+  goToTimeline: () => void;
   setPendingDocument: (doc: PendingDocument | null) => void;
   addFolder: (folder: string) => void;
   saveDocument: (name: string, folder: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost?: number, rupeesCost?: number, mimeType?: string) => void;
@@ -144,6 +145,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const goToArchive = () => setCurrentView('archive');
   const goToTree = () => setCurrentView('tree');
   const goToEntity = () => setCurrentView('entity');
+  const goToTimeline = () => setCurrentView('timeline');
   const fetchLiveDocuments = async () => {
   try {
     const docs = await getDocuments();
@@ -243,6 +245,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           docType,
           metadata: {
             ...(metadata as any),
+            summaryFields: (metadata as any).summaryFields || {}, // Explicitly preserve summaryFields
             folder // Store folder in metadata since schema doesn't have it
           }
         };
@@ -316,6 +319,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       goToArchive,
       goToTree,
       goToEntity,
+      goToTimeline,
       setPendingDocument,
       saveDocument,
       setPricingOpen,

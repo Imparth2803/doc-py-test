@@ -41,8 +41,10 @@ export type Document = {
   tags: DocumentTag[];
   previewUrl?: string; // a data URL for preview
   mimeType?: string;
+  processingStrategy?: 'DIGITAL_DOCUMENT' | 'SCANNED_DOCUMENT' | 'TEXT_ONLY' | 'VISION_FALLBACK' | 'PENDING';
   entities: string[];
   docType?: string;
   metadata?: Record<string, any>;
+  extractedText?: string;
 };
 

@@ -10,6 +10,7 @@ import { Archive } from './components/Archive';
 
 import { TreeView } from './components/TreeView';
 import { EntityView } from './components/EntityView';
+import { TimelineView } from './components/TimelineView';
 import { Dashboard } from './components/Dashboard';
 import { PricingModal } from './components/PricingModal';
 
@@ -44,6 +45,9 @@ function AppContent() {
 
           case 'entity':
             return <EntityView />;
+
+          case 'timeline':
+            return <TimelineView />;
 
           default:
             return <Login />;

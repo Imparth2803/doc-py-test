@@ -45,6 +45,8 @@ export const mapApiDocumentToDocument = (
 
     metadata: doc.metadata || {},
 
+    extractedText: doc.extractedText || '',
+
     mimeType: doc.mimeType,
 
     previewUrl,

@@ -1,10 +1,10 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { LayoutGrid, Search, Plus, Archive, TreePine, Users, LogOut, Zap, FileBox } from 'lucide-react';
+import { LayoutGrid, Search, Plus, Archive, TreePine, Users, LogOut, Zap, FileBox, Calendar } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-export function TopNav({ activeTab }: { activeTab?: 'hub' | 'archive' | 'tree' | 'entity' }) {
-  const { goToDashboard, goToUpload, goToArchive, goToTree, goToEntity, logout, currentView, aiUnits, aiCredits, setPricingOpen } = useApp();
+export function TopNav({ activeTab }: { activeTab?: 'hub' | 'archive' | 'tree' | 'entity' | 'timeline' }) {
+  const { goToDashboard, goToUpload, goToArchive, goToTree, goToEntity, goToTimeline, logout, currentView, aiUnits, aiCredits, setPricingOpen } = useApp();
 
   return (
     <header className="px-6 py-4 flex items-center justify-between border-b border-gray-100 bg-white/80 backdrop-blur-xl sticky top-0 z-50 w-full">
@@ -40,6 +40,12 @@ export function TopNav({ activeTab }: { activeTab?: 'hub' | 'archive' | 'tree' |
             onClick={goToEntity}
             icon={<Users size={18} />} 
             label="Entity Map" 
+          />
+          <NavButton 
+            active={currentView === 'timeline'} 
+            onClick={goToTimeline}
+            icon={<Calendar size={18} />} 
+            label="Timeline" 
           />
         </nav>
       </div>
