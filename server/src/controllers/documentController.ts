@@ -301,6 +301,7 @@ export const processDocument = async (req: any, res: any) => {
     res.json({
       success: true,
       document: result,
+      warnings: result.status === 'PARTIAL_SUCCESS' ? ['AI analysis unavailable'] : []
     });
   } catch (error: any) {
     console.error(error);

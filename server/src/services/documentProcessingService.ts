@@ -171,38 +171,57 @@ export const processDocumentWithAI = async (documentId: string) => {
     const isDigitalPdf = document.mimeType === "application/pdf" && ocrResult.strategy === "DIGITAL_DOCUMENT";
     const hasEnoughText = textLength > PDF_TEXT_THRESHOLD;
 
-    let aiResult;
-    if (isDigitalPdf && hasEnoughText) {
-      geminiMode = "TEXT";
-      console.log(`[ROUTING] TEXT_MODE (length=${textLength})`);
-      
-      aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_TEXT", async () => {
-        return await analyzeTextWithGemini(
-          ocrResult.extractedText,
-          document.originalName
-        );
-      });
-    } else {
-      geminiMode = "VISION";
-      const reason = !isDigitalPdf ? "NOT_A_PDF" : "LOW_TEXT_CONFIDENCE";
-      console.log(`[ROUTING] VISION_MODE (reason=${reason}, length=${textLength})`);
+    let aiResult: any;
+    let aiSuccess = false;
+    let aiErrorMsg = "";
 
-      const fileBuffer = fs.readFileSync(document.storagePath);
-      const base64Data = fileBuffer.toString("base64");
-      
-      aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_VISION", async () => {
-        return await analyzeDocumentWithGemini(
-          base64Data,
-          document.mimeType,
-          document.originalName
-        );
-      });
+    try {
+      if (isDigitalPdf && hasEnoughText) {
+        geminiMode = "TEXT";
+        console.log(`[ROUTING] TEXT_MODE (length=${textLength})`);
+        
+        aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_TEXT", async () => {
+          return await analyzeTextWithGemini(
+            ocrResult.extractedText,
+            document.originalName
+          );
+        });
+      } else {
+        geminiMode = "VISION";
+        const reason = !isDigitalPdf ? "NOT_A_PDF" : "LOW_TEXT_CONFIDENCE";
+        console.log(`[ROUTING] VISION_MODE (reason=${reason}, length=${textLength})`);
+
+        const fileBuffer = fs.readFileSync(document.storagePath);
+        const base64Data = fileBuffer.toString("base64");
+        
+        aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_VISION", async () => {
+          return await analyzeDocumentWithGemini(
+            base64Data,
+            document.mimeType,
+            document.originalName
+          );
+        });
+      }
+      aiSuccess = true;
+    } catch (err: any) {
+      console.error("[GEMINI_FAILED_SWALLOWED]", err.message);
+      aiErrorMsg = err.message;
+      // Initialize a fallback result for the mapper
+      aiResult = {
+        summary: "AI analysis unavailable (Service error)",
+        category: "Other",
+        tags: ["OCR_ONLY"],
+        entities: [],
+        suggestedFilename: document.originalName.split('.')[0],
+        rotation: 0,
+        summaryFields: {}
+      };
     }
     
     await updateProcessingHeartbeat(document, job); // After Gemini
 
     // STEP 4 — Auto-rotation (Gemini driven - VISION ONLY)
-    if (document.mimeType.startsWith("image/") && geminiMode === "VISION") {
+    if (aiSuccess && document.mimeType.startsWith("image/") && geminiMode === "VISION") {
       currentStage = "GEMINI_ROTATION";
       const rotation = aiResult.rotation || 0;
       if (rotation !== 0) {
@@ -246,12 +265,28 @@ export const processDocumentWithAI = async (documentId: string) => {
     
     await measureStep(documentId, "DATABASE_SAVE", async () => {
       Object.assign(document, update);
-      document.status = "COMPLETED";
+      
+      // Handle Partial Success
+      if (!aiSuccess) {
+        document.status = "PARTIAL_SUCCESS";
+        document.metadata = {
+          ...document.metadata,
+          aiStatus: "FAILED",
+          aiError: aiErrorMsg,
+          ocrStatus: "SUCCESS"
+        };
+      } else {
+        document.status = "COMPLETED";
+      }
+
       document.processingCompletedAt = new Date();
       await document.save();
 
       if (job) {
-        job.status = "COMPLETED";
+        job.status = aiSuccess ? "COMPLETED" : "PARTIAL_SUCCESS";
+        if (!aiSuccess) {
+          job.errorMessage = `AI Analysis failed: ${aiErrorMsg}`;
+        }
         job.completedAt = new Date();
         await job.save();
       }
