@@ -1,0 +1,36 @@
+# --- Smart Document Vault OCR Subsystem - Production Lock File ---
+# Generated for: Python 3.11
+# ABI Stability: NumPy 1.26.x (Prevents OpenCV/Paddle ABI breakage)
+
+# Web Framework
+fastapi==0.110.0
+uvicorn==0.27.1
+pydantic==2.6.3
+
+# Core OCR (Pinned to 2.x to preserve PPStructure API)
+paddlepaddle==2.6.2
+paddleocr==2.7.3
+
+# Document Processing & ML Fallback
+# Docling 2.x for high-fidelity table extraction
+docling==2.15.1
+docling-core==2.10.0
+# Specific torch CPU build for efficiency
+torch==2.3.1+cpu --index-url https://download.pytorch.org/whl/cpu
+
+# Image & PDF Utilities
+opencv-python-headless==4.10.0.84
+PyMuPDF==1.24.4
+pdfplumber==0.11.4
+camelot-py[cv]==0.11.0
+
+# Data & Excel
+pandas==2.2.2
+openpyxl==3.1.5
+numpy==1.26.4
+
+# Transitive Fixes & Stability
+typing-extensions==4.12.2
+python-multipart==0.0.9
+requests==2.32.3
+PyYAML==6.0.1

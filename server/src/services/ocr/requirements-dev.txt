@@ -1,0 +1,23 @@
+# --- OCR Development & Upgrade Protection ---
+# This file defines the policy for future upgrades.
+
+# 1. DO NOT change requirements-lock.txt unless:
+#    a) You have tested with 'python scripts/validate_ocr_environment.py'
+#    b) You have verified PPStructure API compatibility
+#    c) You have verified NumPy ABI compatibility with OpenCV
+
+# 2. Strict Pinning Policy:
+#    Use EXACT versions (==) for all ML and OCR libraries.
+#    Floating versions (>=) are prohibited for production releases.
+
+# 3. Upgrade Checklist:
+#    - [ ] Target Python Version: 3.11.x
+#    - [ ] PaddleOCR < 3.0.0
+#    - [ ] NumPy < 2.0.0 (Current recommendation for ABI stability)
+#    - [ ] Docling 2.x API consistency
+
+# Development Tools
+pytest==8.2.2
+httpx==0.27.0
+black==24.4.2
+flake8==7.1.0

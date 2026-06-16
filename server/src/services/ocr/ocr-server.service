@@ -1,0 +1,29 @@
+[Unit]
+Description=FastAPI PaddleOCR Singleton Service
+After=network.target
+
+[Service]
+# User and Group should be adjusted to the local user running the app
+User=partht
+Group=staff
+
+# Working directory should be the root of the server project
+WorkingDirectory=/Users/partht/Downloads/auto-file-ai_-smart-document-vault/server
+
+# Environment variables if needed
+Environment=PYTHONPATH=.
+
+# Command to start the service using the virtual environment interpreter
+# Assumes venv is in server/venv
+ExecStart=/Users/partht/Downloads/auto-file-ai_-smart-document-vault/server/venv/bin/uvicorn src.services.ocr.ocr_server:app --host 127.0.0.1 --port 8001 --workers 1
+
+# Restart strategy
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+# WARNING: DO NOT USE FLOATING VERSIONS (>=).
+# This subsystem is highly sensitive to ML library versions.
+# Use requirements-lock.txt for production and CI/CD.
+
+-r requirements-lock.txt
