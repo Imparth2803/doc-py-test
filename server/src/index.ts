@@ -6,6 +6,7 @@ import connectDB from './config/db';
 import authRoutes from "./routes/authRoutes";
 import documentRoutes from './routes/documentRoutes';
 import path from "path";
+import { REGISTERED_SERVICES } from './config/serviceRegistry';
 
 dotenv.config();
 
@@ -30,6 +31,16 @@ const PORT = process.env.PORT || 8000;
 
 const startServer = async () => {
   try {
+    console.log('====================================');
+    console.log('Service Configuration');
+    console.log('====================================');
+    console.log(`Backend:\n${REGISTERED_SERVICES.backend}\n`);
+    console.log(`OCR:\n${REGISTERED_SERVICES.ocr}\n`);
+    console.log(`GLiNER:\n${REGISTERED_SERVICES.gliner}\n`);
+    console.log(`Ollama:\n${REGISTERED_SERVICES.ollama}\n`);
+    console.log(`AI Provider:\n${process.env.AI_PROVIDER || 'gemini'}`);
+    console.log('====================================\n');
+    
     console.log('STARTING SERVER...');
 
     await connectDB();

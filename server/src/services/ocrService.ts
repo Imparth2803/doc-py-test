@@ -4,7 +4,7 @@ import path from 'path';
 import sharp from 'sharp';
 import axios from 'axios';
 
-const getOcrServiceUrl = () => process.env.OCR_SERVICE_URL || 'http://localhost:8001';
+import { getOCRServiceUrl } from '../config/serviceUrls';
 
 const runPaddleOCR = async (
   filePath: string,
@@ -15,7 +15,7 @@ const runPaddleOCR = async (
   angle: number;
   orientationConfidence: number;
 }> => {
-  const ocrUrl = getOcrServiceUrl();
+  const ocrUrl = getOCRServiceUrl();
   console.log(`[OCR] Sending HTTP request to FastAPI OCR service at ${ocrUrl} for ${filePath}`);
   
   try {
@@ -40,7 +40,7 @@ const runPaddleOCR = async (
  * Validates that the OCR service is reachable at startup.
  */
 export const validateOCRServiceHealth = async () => {
-  const ocrUrl = getOcrServiceUrl();
+  const ocrUrl = getOCRServiceUrl();
   console.log(`[OCR] Validating FastAPI OCR Service health at ${ocrUrl}...`);
   try {
     const response = await axios.get(`${ocrUrl}/health`, { timeout: 5000 });

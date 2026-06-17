@@ -1,11 +1,12 @@
 import axios from 'axios';
 import { logMetric, logError } from '../utils/logger';
+import { getOCRServiceUrl } from '../config/serviceUrls';
 
 /**
  * Service to handle table extraction from documents using the FastAPI OCR service.
  */
 export const extractTables = async (documentId: string, filePath: string, strategy: string): Promise<any[]> => {
-  const ocrUrl = process.env.OCR_SERVICE_URL || 'http://localhost:8001';
+  const ocrUrl = getOCRServiceUrl();
   const perfStart = Date.now();
   
   console.log(`[TABLE_EXTRACTION] Requesting table extraction for ${filePath} (Strategy: ${strategy})`);

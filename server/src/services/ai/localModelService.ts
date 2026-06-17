@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getOllamaUrl } from '../../config/serviceUrls';
 
 export interface AIAnalysisResult {
   tags: string[];
@@ -100,7 +101,7 @@ ${truncatedText}
 `;
 
     const response = await axios.post(
-      'http://localhost:11434/api/generate',
+      `${getOllamaUrl()}/api/generate`,
       {
         model: 'qwen2.5:3b',
         prompt,
