@@ -6,7 +6,7 @@ export interface IDocument extends MongooseDocument {
   documentName?: string;
   storagePath: string;
   mimeType: string;
-  status: 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status: 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'PARTIAL_SUCCESS';
   ocrConfidence?: number;
   processingStrategy?: 'DIGITAL_DOCUMENT' | 'SCANNED_DOCUMENT' | 'TEXT_ONLY' | 'VISION_FALLBACK' | 'PENDING';
   docType?: string;
@@ -37,7 +37,7 @@ const DocumentSchema: Schema = new Schema({
   documentName: { type: String, index: true },
   storagePath: { type: String, required: true },
   mimeType: { type: String, required: true },
-  status: { type: String, enum: ['UPLOADING', 'PROCESSING', 'COMPLETED', 'FAILED'], default: 'PROCESSING', index: true },
+  status: { type: String, enum: ['UPLOADING', 'PROCESSING', 'COMPLETED', 'FAILED', 'PARTIAL_SUCCESS'], default: 'PROCESSING', index: true },
   ocrConfidence: { type: Number },
   processingStrategy: { type: String, enum: ['DIGITAL_DOCUMENT', 'SCANNED_DOCUMENT', 'TEXT_ONLY', 'VISION_FALLBACK', 'PENDING'], default: 'PENDING' },
   docType: { type: String },

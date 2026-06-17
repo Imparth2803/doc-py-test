@@ -1,12 +1,11 @@
-// /Users/partht/Downloads/auto-file-ai_-smart-document-vault/server/src/services/ai/geminiService.ts
 import { GoogleGenAI, Type } from "@google/genai";
+import { AIAnalysisResult } from './types'; 
+import { AIQuotaExceededError } from './errors';
+import { IAIProvider } from './aiProvider';
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY!,
 });
-
-import { AIAnalysisResult } from './types'; 
-import { AIQuotaExceededError } from './errors';
 
 const RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -196,15 +195,13 @@ const cleanAndParseGeminiResponse = (text: string): AIAnalysisResult => {
   return result;
 };
 
-export const analyzeTextWithGemini = async (
-  text: string,
-  fileName: string
-): Promise<AIAnalysisResult> => {
-  console.log("=== GEMINI TEXT REQUEST ===");
-  console.log("File:", fileName);
-  console.log("Text Length:", text.length);
+export class GeminiProvider implements IAIProvider {
+  async analyzeText(text: string, fileName: string): Promise<AIAnalysisResult> {
+    console.log("=== GEMINI TEXT REQUEST ===");
+    console.log("File:", fileName);
+    console.log("Text Length:", text.length);
 
-  const promptText = `
+    const promptText = `
 ${getBasePrompt(fileName)}
 
 NOTE: Since this is raw text input, visual rotation is not applicable. Always return "rotation": 0.
@@ -213,45 +210,40 @@ Document Text Content:
 ${text.slice(0, 30000)}
 `;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash", // Use 2.0 Flash for text
-      contents: [{ role: "user", parts: [{ text: promptText }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-      },
-    });
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash", // Use 2.0 Flash for text
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
+        },
+      });
 
-    console.log("=== GEMINI TEXT RESPONSE ===");
-    const result = cleanAndParseGeminiResponse(response.text ?? "");
-    return result;
-  } catch (error: any) {
-    const status = error?.status || error?.response?.status;
-    const message = error?.message || "";
-    
-    if (status === 429 || message.toLowerCase().includes("quota exceeded")) {
-      console.error("Gemini Quota Exceeded (Text):", message);
-      throw new AIQuotaExceededError();
+      console.log("=== GEMINI TEXT RESPONSE ===");
+      const result = cleanAndParseGeminiResponse(response.text ?? "");
+      return result;
+    } catch (error: any) {
+      const status = error?.status || error?.response?.status;
+      const message = error?.message || "";
+      
+      if (status === 429 || message.toLowerCase().includes("quota exceeded")) {
+        console.error("Gemini Quota Exceeded (Text):", message);
+        throw new AIQuotaExceededError();
+      }
+
+      console.error("Gemini Text AI Error:", error);
+      throw error;
     }
-
-    console.error("Gemini Text AI Error:", error);
-    throw error;
   }
-};
 
-export const analyzeDocumentWithGemini = async (
-  base64Data: string,
-  mimeType: string,
-  fileName: string
-): Promise<AIAnalysisResult> => {
+  async analyzeDocument(base64Data: string, mimeType: string, fileName: string): Promise<AIAnalysisResult> {
+    console.log("=== GEMINI VISION REQUEST ===");
+    console.log("File:", fileName);
+    console.log("Mime:", mimeType);
+    console.log("Base64 Length:", base64Data.length);
 
-  console.log("=== GEMINI VISION REQUEST ===");
-  console.log("File:", fileName);
-  console.log("Mime:", mimeType);
-  console.log("Base64 Length:", base64Data.length);
-
-  const promptText = `
+    const promptText = `
 ${getBasePrompt(fileName)}
 
 Determine whether the uploaded document image truly requires rotation.
@@ -274,63 +266,64 @@ CRITICAL ROTATION SAFETY RULES:
 - Return a non-zero rotation only when the main text is clearly unreadable without rotating the document.
 `;
 
-  const retryDelays = [0, 2000, 5000, 10000];
-  
-  for (let i = 0; i < retryDelays.length; i++) {
-    const attempt = i + 1;
-    console.log(`[Gemini] Attempt ${attempt}`);
+    const retryDelays = [0, 2000, 5000, 10000];
+    
+    for (let i = 0; i < retryDelays.length; i++) {
+      const attempt = i + 1;
+      console.log(`[Gemini] Attempt ${attempt}`);
 
-    if (retryDelays[i] > 0) {
-      await new Promise(resolve => setTimeout(resolve, retryDelays[i]));
-    }
+      if (retryDelays[i] > 0) {
+        await new Promise(resolve => setTimeout(resolve, retryDelays[i]));
+      }
 
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                inlineData: {
-                  data: base64Data,
-                  mimeType,
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  inlineData: {
+                    data: base64Data,
+                    mimeType,
+                  },
                 },
-              },
-              {
-                text: promptText,
-              },
-            ],
+                {
+                  text: promptText,
+                },
+              ],
+            },
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: RESPONSE_SCHEMA,
           },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
-        },
-      });
+        });
 
-      console.log("=== GEMINI VISION RESPONSE ===");
-      const result = cleanAndParseGeminiResponse(response.text ?? "");
-      return result;
+        console.log("=== GEMINI VISION RESPONSE ===");
+        const result = cleanAndParseGeminiResponse(response.text ?? "");
+        return result;
 
-    } catch (error: any) {
-      const status = error?.status || error?.response?.status;
-      const message = error?.message || "";
-      
-      if (attempt < retryDelays.length && (status === 503 || status === 429)) {
-        console.log(`[Gemini] Temporary service error (${status}). Retrying...`);
-        continue;
+      } catch (error: any) {
+        const status = error?.status || error?.response?.status;
+        const message = error?.message || "";
+        
+        if (attempt < retryDelays.length && (status === 503 || status === 429)) {
+          console.log(`[Gemini] Temporary service error (${status}). Retrying...`);
+          continue;
+        }
+
+        if (status === 429 || message.toLowerCase().includes("quota exceeded")) {
+          console.error("Gemini Quota Exceeded (Vision):", message);
+          throw new AIQuotaExceededError();
+        }
+
+        console.error("Gemini Vision AI Error:", error);
+        throw error;
       }
-
-      if (status === 429 || message.toLowerCase().includes("quota exceeded")) {
-        console.error("Gemini Quota Exceeded (Vision):", message);
-        throw new AIQuotaExceededError();
-      }
-
-      console.error("Gemini Vision AI Error:", error);
-      throw error;
     }
-  }
 
-  throw new Error("AI Processing Failed");
-};
+    throw new Error("AI Processing Failed");
+  }
+}

@@ -1,4 +1,4 @@
-import { analyzeDocumentWithGemini } from './services/ai/geminiService';
+import { aiOrchestrator } from './services/ai/aiOrchestrator';
 
 async function run() {
   const dummyInvoice = `
@@ -22,7 +22,7 @@ Payment Status: Unpaid
   const fileName = 'invoice.txt';
 
   try {
-    const result = await analyzeDocumentWithGemini(base64Data, mimeType, fileName);
+    const result = await aiOrchestrator.analyzeDocument(base64Data, mimeType, fileName);
     console.log("FINAL RESULT:", JSON.stringify(result, null, 2));
   } catch (err) {
     console.error(err);

@@ -7,7 +7,7 @@ import {
 
 import Document, { IDocument } from "../models/Document";
 import ProcessingJob, { IProcessingJob } from "../models/ProcessingJob";
-import { analyzeDocumentWithGemini, analyzeTextWithGemini } from "./ai/geminiService";
+import { aiOrchestrator } from "./ai/aiOrchestrator";
 import { mapDocumentUpdate } from "./documentMapper";
 import { logMetric, logError, measureStep } from "../utils/logger";
 import { extractTables } from "./tableExtractionService";
@@ -181,7 +181,7 @@ export const processDocumentWithAI = async (documentId: string) => {
         console.log(`[ROUTING] TEXT_MODE (length=${textLength})`);
         
         aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_TEXT", async () => {
-          return await analyzeTextWithGemini(
+          return await aiOrchestrator.analyzeText(
             ocrResult.extractedText,
             document.originalName
           );
@@ -195,7 +195,7 @@ export const processDocumentWithAI = async (documentId: string) => {
         const base64Data = fileBuffer.toString("base64");
         
         aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_VISION", async () => {
-          return await analyzeDocumentWithGemini(
+          return await aiOrchestrator.analyzeDocument(
             base64Data,
             document.mimeType,
             document.originalName
