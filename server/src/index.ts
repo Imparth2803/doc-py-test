@@ -7,6 +7,8 @@ import authRoutes from "./routes/authRoutes";
 import documentRoutes from './routes/documentRoutes';
 import path from "path";
 import { REGISTERED_SERVICES } from './config/serviceRegistry';
+import { validateOCRServiceHealth } from './services/ocrService';
+import { validateGLiNERServiceHealth } from './services/entities/glinerService';
 
 dotenv.config();
 
@@ -54,6 +56,9 @@ const startServer = async () => {
     // Validate OCR Service
     const { validateOCRServiceHealth } = require('./services/ocrService');
     validateOCRServiceHealth();
+
+    // Validate GLiNER Service
+    validateGLiNERServiceHealth();
 
     app.listen(PORT, () => {
       console.log(`SERVER RUNNING ON PORT ${PORT}`);

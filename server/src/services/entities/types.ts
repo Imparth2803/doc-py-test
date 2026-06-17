@@ -4,8 +4,15 @@ export interface GLiNEREntities {
   locations: string[];
 }
 
+export interface GLiNEREntity {
+  text: string;
+  label: string;
+  confidence: number;
+}
+
 export interface EntityComparisonResult {
-  overlapCount: number;
+  exactOverlapCount: number;
+  fuzzyOverlapCount: number;
   geminiOnlyCount: number;
   glinerOnlyCount: number;
   overlap: string[];
@@ -15,5 +22,8 @@ export interface EntityComparisonResult {
 
 export interface GLiNERResult {
   entities: GLiNEREntities;
+  rawEntities: GLiNEREntity[];
+  chunkCount: number;
+  avgConfidence: number;
   latencyMs: number;
 }

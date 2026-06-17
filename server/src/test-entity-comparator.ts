@@ -18,8 +18,8 @@ const runTests = () => {
   console.log('Mapped:', flatLoc);
 
   console.log('--- TEST: Comparison Logic ---');
-  const geminiEntities = ['Parth Tawde', 'University of Hertfordshire', 'Some Random Thing'];
-  const glinerEntities = ['parth tawde', 'university of hertfordshire', 'London'];
+  const geminiEntities = ['Parth Tawde', 'University of Hertfordshire', 'Some Random Thing', 'SBI Bank Ltd'];
+  const glinerEntities = ['parth tawde', 'university of hertfordshire', 'London', 'SBI Bank'];
   
   const comp = compareEntities(geminiEntities, glinerEntities);
   console.log('Comparison Result:', JSON.stringify(comp, null, 2));

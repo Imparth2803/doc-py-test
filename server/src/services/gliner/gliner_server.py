@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from gliner import GLiNER
 import logging
+from typing import List, Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("GLiNER_Service")
@@ -22,10 +23,17 @@ except Exception as e:
 class ExtractRequest(BaseModel):
     text: str
 
+class DetailedEntity(BaseModel):
+    text: str
+    label: str
+    confidence: float
+
 class ExtractResponse(BaseModel):
-    persons: list[str]
-    organizations: list[str]
-    locations: list[str]
+    persons: List[str]
+    organizations: List[str]
+    locations: List[str]
+    raw_entities: List[DetailedEntity]
+    chunk_count: int
 
 @app.get("/health")
 def health_check():
@@ -40,35 +48,76 @@ def extract_entities(req: ExtractRequest):
 
     text = req.text
     if not text or not text.strip():
-        return ExtractResponse(persons=[], organizations=[], locations=[])
+        return ExtractResponse(
+            persons=[], organizations=[], locations=[], raw_entities=[], chunk_count=0
+        )
 
-    # Truncate text to avoid massive memory spikes (GLiNER has context limits, usually ~512-1024 tokens)
-    # We will slice roughly 3000 chars to be safe.
-    text_slice = text[:3000]
+    # Issue 2: Replace 3000 Character Truncation with Chunking
+    chunk_size = 2500
+    overlap = 200
+    chunks = []
+    
+    if len(text) <= chunk_size:
+        chunks.append(text)
+    else:
+        start = 0
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
+            chunks.append(text[start:end])
+            if end == len(text):
+                break
+            start += chunk_size - overlap
 
     labels = ["Person", "Organization", "Location"]
+    all_entities = {}
+
     try:
-        entities = model.predict_entities(text_slice, labels, threshold=0.4)
+        for chunk in chunks:
+            # Predict entities for this chunk
+            entities = model.predict_entities(chunk, labels, threshold=0.4)
+            
+            for entity in entities:
+                label = entity["label"]
+                text_val = entity["text"].strip()
+                score = entity["score"]
+                
+                key = (label, text_val)
+                # Deduplicate, keeping the highest confidence score
+                if key not in all_entities or all_entities[key]["score"] < score:
+                    all_entities[key] = {
+                        "text": text_val,
+                        "label": label,
+                        "score": score
+                    }
         
         persons = []
         organizations = []
         locations = []
+        raw_entities = []
 
-        for entity in entities:
+        for key, entity in all_entities.items():
             label = entity["label"]
-            text_val = entity["text"].strip()
+            text_val = entity["text"]
             
-            if label == "Person" and text_val not in persons:
+            raw_entities.append(DetailedEntity(
+                text=text_val,
+                label=label,
+                confidence=entity["score"]
+            ))
+            
+            if label == "Person":
                 persons.append(text_val)
-            elif label == "Organization" and text_val not in organizations:
+            elif label == "Organization":
                 organizations.append(text_val)
-            elif label == "Location" and text_val not in locations:
+            elif label == "Location":
                 locations.append(text_val)
 
         return ExtractResponse(
             persons=persons,
             organizations=organizations,
-            locations=locations
+            locations=locations,
+            raw_entities=raw_entities,
+            chunk_count=len(chunks)
         )
     except Exception as e:
         logger.error(f"Extraction failed: {e}")

@@ -114,11 +114,6 @@ export const processDocumentWithAI = async (documentId: string) => {
     currentStage = "METADATA_EXTRACTION";
     const regexMetadata = extractMetadata(ocrResult.extractedText || "");
 
-    // STEP 2.3 — GLiNER Entity Extraction (Shadow Mode)
-    currentStage = "GLINER_EXTRACTION";
-    const glinerResult = await extractEntitiesWithGLiNER(ocrResult.extractedText || "");
-    const flatGlinerEntities = mapGLiNEREntitiesToFlatArray(glinerResult.entities);
-
     // STEP 2.5 — Large PDF Protection Layer
     currentStage = "PROTECTION_LAYER";
     const fileStats = fs.statSync(document.storagePath);
@@ -154,6 +149,12 @@ export const processDocumentWithAI = async (documentId: string) => {
     if (classification === "LARGE_DOCUMENT") {
       console.warn(`[PROTECTION_WARNING] Processing large document: ${documentId} (${pageCount} pages, ${Math.round(fileSize / 1024 / 1024)}MB)`);
     }
+
+    // STEP 2.6 — GLiNER Entity Extraction (Shadow Mode)
+    // Runs AFTER protection layer so we don't waste CPU on oversized/rejected docs
+    currentStage = "GLINER_EXTRACTION";
+    const glinerResult = await extractEntitiesWithGLiNER(ocrResult.extractedText || "");
+    const flatGlinerEntities = mapGLiNEREntitiesToFlatArray(glinerResult.entities);
 
     // STEP 2.7 — Table Extraction
     let extractedTables: any[] = [];
@@ -240,11 +241,35 @@ export const processDocumentWithAI = async (documentId: string) => {
     
     // Entity Comparison (Shadow Mode)
     const entityComparison = compareEntities(aiResult.entities || [], flatGlinerEntities);
-    aiResult.metadata.processingDiagnostics = {
-      ...aiResult.metadata.processingDiagnostics,
+    
+    const benchmarkDiagnostics = {
       entityComparison,
       glinerLatencyMs: glinerResult.latencyMs,
-      glinerEntityCount: flatGlinerEntities.length
+      glinerEntityCount: flatGlinerEntities.length,
+      ocrTextLength: textLength,
+      documentType: aiResult.category || 'UNKNOWN',
+      chunkCount: glinerResult.chunkCount,
+      avgConfidence: glinerResult.avgConfidence
+    };
+
+    console.log('\n==================================');
+    console.log('GLiNER Benchmark');
+    console.log('==================================');
+    console.log(`Document Type: ${benchmarkDiagnostics.documentType}\n`);
+    console.log(`OCR Text Length: ${benchmarkDiagnostics.ocrTextLength}\n`);
+    console.log(`Chunk Count: ${benchmarkDiagnostics.chunkCount}\n`);
+    console.log(`GLiNER Entities: ${benchmarkDiagnostics.glinerEntityCount}\n`);
+    console.log(`Average Confidence: ${benchmarkDiagnostics.avgConfidence.toFixed(2)}\n`);
+    console.log(`Latency: ${benchmarkDiagnostics.glinerLatencyMs}ms\n`);
+    console.log(`Exact Overlap: ${entityComparison.exactOverlapCount}\n`);
+    console.log(`Fuzzy Overlap: ${entityComparison.fuzzyOverlapCount}\n`);
+    console.log(`Gemini Only: ${entityComparison.geminiOnlyCount}\n`);
+    console.log(`GLiNER Only: ${entityComparison.glinerOnlyCount}`);
+    console.log('==================================\n');
+
+    aiResult.metadata.processingDiagnostics = {
+      ...aiResult.metadata.processingDiagnostics,
+      ...benchmarkDiagnostics
     };
 
     await updateProcessingHeartbeat(document, job); // After Gemini
