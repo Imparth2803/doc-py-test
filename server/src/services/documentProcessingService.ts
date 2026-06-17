@@ -8,6 +8,7 @@ import {
 import Document, { IDocument } from "../models/Document";
 import ProcessingJob, { IProcessingJob } from "../models/ProcessingJob";
 import { aiOrchestrator } from "./ai/aiOrchestrator";
+import { extractMetadata } from "./metadata/metadataExtractor";
 import { mapDocumentUpdate } from "./documentMapper";
 import { logMetric, logError, measureStep } from "../utils/logger";
 import { extractTables } from "./tableExtractionService";
@@ -105,6 +106,10 @@ export const processDocumentWithAI = async (documentId: string) => {
     
     await updateProcessingHeartbeat(document, job); // After OCR
     textLength = ocrResult.extractedText?.length || 0;
+
+    // STEP 2.2 — Regex Metadata Extraction
+    currentStage = "METADATA_EXTRACTION";
+    const regexMetadata = extractMetadata(ocrResult.extractedText || "");
 
     // STEP 2.5 — Large PDF Protection Layer
     currentStage = "PROTECTION_LAYER";
@@ -217,6 +222,13 @@ export const processDocumentWithAI = async (documentId: string) => {
         summaryFields: {}
       };
     }
+    
+    // Merge Regex Metadata with AI Metadata
+    const mergedMetadata = {
+      ...regexMetadata,
+      ...(aiResult.metadata || {})
+    };
+    aiResult.metadata = mergedMetadata;
     
     await updateProcessingHeartbeat(document, job); // After Gemini
 
