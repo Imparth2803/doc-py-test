@@ -12,6 +12,8 @@ import { extractMetadata } from "./metadata/metadataExtractor";
 import { extractEntitiesWithGLiNER } from "./entities/glinerService";
 import { mapGLiNEREntitiesToFlatArray } from "./entities/entityMapper";
 import { compareEntities } from "./entities/entityComparator";
+import { classifyDocumentByRules } from "./classification/ruleClassifier";
+import { compareClassifications, printClassificationBenchmark } from "./classification/classificationComparator";
 import { mapDocumentUpdate } from "./documentMapper";
 import { logMetric, logError, measureStep } from "../utils/logger";
 import { extractTables } from "./tableExtractionService";
@@ -156,6 +158,10 @@ export const processDocumentWithAI = async (documentId: string) => {
     const glinerResult = await extractEntitiesWithGLiNER(ocrResult.extractedText || "");
     const flatGlinerEntities = mapGLiNEREntitiesToFlatArray(glinerResult.entities);
 
+    // STEP 2.65 - Rule-Based Document Classification (Shadow Mode)
+    currentStage = "RULE_CLASSIFICATION";
+    const ruleClassification = classifyDocumentByRules(ocrResult.extractedText || "", regexMetadata);
+
     // STEP 2.7 — Table Extraction
     let extractedTables: any[] = [];
     const canExtractTables = 
@@ -267,9 +273,20 @@ export const processDocumentWithAI = async (documentId: string) => {
     console.log(`GLiNER Only: ${entityComparison.glinerOnlyCount}`);
     console.log('==================================\n');
 
+    // Classification Comparison (Shadow Mode)
+    const classificationComparison = compareClassifications(ruleClassification, aiResult.category || "UNKNOWN");
+    printClassificationBenchmark(classificationComparison);
+
     aiResult.metadata.processingDiagnostics = {
       ...aiResult.metadata.processingDiagnostics,
-      ...benchmarkDiagnostics
+      ...benchmarkDiagnostics,
+      ruleClassification: {
+        category: ruleClassification.category,
+        confidence: ruleClassification.confidence
+      },
+      classificationComparison: {
+        match: classificationComparison.match
+      }
     };
 
     await updateProcessingHeartbeat(document, job); // After Gemini
