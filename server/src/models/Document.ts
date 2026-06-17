@@ -29,6 +29,11 @@ export interface IDocument extends MongooseDocument {
   processingCompletedAt?: Date;
   processingFailedAt?: Date;
   lastHeartbeatAt?: Date;
+  processingCheckpoint?: {
+    ocrCompleted: boolean;
+    enrichmentCompleted: boolean;
+    aiCompleted: boolean;
+  };
 }
 
 const DocumentSchema: Schema = new Schema({
@@ -59,7 +64,12 @@ const DocumentSchema: Schema = new Schema({
   processingStartedAt: { type: Date },
   processingCompletedAt: { type: Date },
   processingFailedAt: { type: Date },
-  lastHeartbeatAt: { type: Date }
+  lastHeartbeatAt: { type: Date },
+  processingCheckpoint: {
+    ocrCompleted: { type: Boolean, default: false },
+    enrichmentCompleted: { type: Boolean, default: false },
+    aiCompleted: { type: Boolean, default: false }
+  }
 }, { timestamps: true });
 
 // Text Index for Semantic Search prep
