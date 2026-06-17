@@ -9,6 +9,9 @@ import Document, { IDocument } from "../models/Document";
 import ProcessingJob, { IProcessingJob } from "../models/ProcessingJob";
 import { aiOrchestrator } from "./ai/aiOrchestrator";
 import { extractMetadata } from "./metadata/metadataExtractor";
+import { extractEntitiesWithGLiNER } from "./entities/glinerService";
+import { mapGLiNEREntitiesToFlatArray } from "./entities/entityMapper";
+import { compareEntities } from "./entities/entityComparator";
 import { mapDocumentUpdate } from "./documentMapper";
 import { logMetric, logError, measureStep } from "../utils/logger";
 import { extractTables } from "./tableExtractionService";
@@ -110,6 +113,11 @@ export const processDocumentWithAI = async (documentId: string) => {
     // STEP 2.2 — Regex Metadata Extraction
     currentStage = "METADATA_EXTRACTION";
     const regexMetadata = extractMetadata(ocrResult.extractedText || "");
+
+    // STEP 2.3 — GLiNER Entity Extraction (Shadow Mode)
+    currentStage = "GLINER_EXTRACTION";
+    const glinerResult = await extractEntitiesWithGLiNER(ocrResult.extractedText || "");
+    const flatGlinerEntities = mapGLiNEREntitiesToFlatArray(glinerResult.entities);
 
     // STEP 2.5 — Large PDF Protection Layer
     currentStage = "PROTECTION_LAYER";
@@ -230,6 +238,15 @@ export const processDocumentWithAI = async (documentId: string) => {
     };
     aiResult.metadata = mergedMetadata;
     
+    // Entity Comparison (Shadow Mode)
+    const entityComparison = compareEntities(aiResult.entities || [], flatGlinerEntities);
+    aiResult.metadata.processingDiagnostics = {
+      ...aiResult.metadata.processingDiagnostics,
+      entityComparison,
+      glinerLatencyMs: glinerResult.latencyMs,
+      glinerEntityCount: flatGlinerEntities.length
+    };
+
     await updateProcessingHeartbeat(document, job); // After Gemini
 
     // STEP 4 — Auto-rotation (Gemini driven - VISION ONLY)
