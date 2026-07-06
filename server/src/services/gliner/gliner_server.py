@@ -3,6 +3,9 @@ from pydantic import BaseModel
 from gliner import GLiNER
 import logging
 from typing import List, Optional
+import re
+from indic_transliteration import sanscript
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("GLiNER_Service")
@@ -27,11 +30,12 @@ class DetailedEntity(BaseModel):
     text: str
     label: str
     confidence: float
+    start: int
+    end: int
 
 class ExtractResponse(BaseModel):
     persons: List[str]
     organizations: List[str]
-    locations: List[str]
     raw_entities: List[DetailedEntity]
     chunk_count: int
 
@@ -41,15 +45,48 @@ def health_check():
         raise HTTPException(status_code=503, detail="Model not loaded")
     return {"status": "ok", "model": model_name}
 
+def preprocess_indic_text(text: str) -> str:
+    if not text:
+        return ""
+    
+    # Check for Devanagari and Gujarati characters
+    has_devanagari = bool(re.search(r'[\u0900-\u097F]', text))
+    has_gujarati = bool(re.search(r'[\u0A80-\u0AFF]', text))
+    
+    # Return English text untouched, preserving original case and characters
+    if not has_devanagari and not has_gujarati:
+        return text
+
+    # Transliterate to ITRANS
+    if has_devanagari:
+        text = sanscript.transliterate(text, sanscript.DEVANAGARI, sanscript.ITRANS)
+    if has_gujarati:
+        text = sanscript.transliterate(text, sanscript.GUJARATI, sanscript.ITRANS)
+        
+    # Standardize V -> W
+    text = text.replace('v', 'w').replace('V', 'W')
+    
+    # Strip internal and trailing schwa vowels
+    consonants = "[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]"
+    
+    # Trailing schwa: word longer than 3 characters ending in 'a'
+    text = re.sub(r'\b([a-zA-Z\.\~]{3,})a\b', r'\1', text)
+    
+    # Internal schwa: consonant + 'a' + consonant + 'e' (or 'o') at the end of a word
+    text = re.sub(rf'\b([a-zA-Z\.\~]*{consonants})a({consonants}[eo])\b', r'\1\2', text)
+    
+    # Force output to uppercase
+    return text.upper()
+
 @app.post("/extract-entities", response_model=ExtractResponse)
 def extract_entities(req: ExtractRequest):
     if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    text = req.text
+    text = preprocess_indic_text(req.text)
     if not text or not text.strip():
         return ExtractResponse(
-            persons=[], organizations=[], locations=[], raw_entities=[], chunk_count=0
+            persons=[], organizations=[], raw_entities=[], chunk_count=0
         )
 
     # Issue 2: Replace 3000 Character Truncation with Chunking
@@ -58,21 +95,21 @@ def extract_entities(req: ExtractRequest):
     chunks = []
     
     if len(text) <= chunk_size:
-        chunks.append(text)
+        chunks.append((0, text))
     else:
         start = 0
         while start < len(text):
             end = min(start + chunk_size, len(text))
-            chunks.append(text[start:end])
+            chunks.append((start, text[start:end]))
             if end == len(text):
                 break
             start += chunk_size - overlap
 
-    labels = ["Person", "Organization", "Location"]
+    labels = ["Person", "Organization"]
     all_entities = {}
 
     try:
-        for chunk in chunks:
+        for chunk_start, chunk in chunks:
             # Predict entities for this chunk
             entities = model.predict_entities(chunk, labels, threshold=0.4)
             
@@ -80,6 +117,8 @@ def extract_entities(req: ExtractRequest):
                 label = entity["label"]
                 text_val = entity["text"].strip()
                 score = entity["score"]
+                abs_start = chunk_start + entity["start"]
+                abs_end = chunk_start + entity["end"]
                 
                 key = (label, text_val)
                 # Deduplicate, keeping the highest confidence score
@@ -87,12 +126,13 @@ def extract_entities(req: ExtractRequest):
                     all_entities[key] = {
                         "text": text_val,
                         "label": label,
-                        "score": score
+                        "score": score,
+                        "start": abs_start,
+                        "end": abs_end
                     }
         
         persons = []
         organizations = []
-        locations = []
         raw_entities = []
 
         for key, entity in all_entities.items():
@@ -102,20 +142,19 @@ def extract_entities(req: ExtractRequest):
             raw_entities.append(DetailedEntity(
                 text=text_val,
                 label=label,
-                confidence=entity["score"]
+                confidence=entity["score"],
+                start=entity["start"],
+                end=entity["end"]
             ))
             
             if label == "Person":
                 persons.append(text_val)
             elif label == "Organization":
                 organizations.append(text_val)
-            elif label == "Location":
-                locations.append(text_val)
 
         return ExtractResponse(
             persons=persons,
             organizations=organizations,
-            locations=locations,
             raw_entities=raw_entities,
             chunk_count=len(chunks)
         )

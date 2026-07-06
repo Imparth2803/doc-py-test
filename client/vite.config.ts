@@ -1,3 +1,4 @@
+// client/vite.config.ts
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
@@ -16,10 +17,13 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
-      // ✅ Crucial Addition: Assign explicit listener port matching your target
       port: 3000,
       strictPort: true,
       hmr: process.env.DISABLE_HMR !== 'true',
+      // 🛠️ FIX: Inject the COOP loose header constraint right here
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+      },
     },
   };
 });

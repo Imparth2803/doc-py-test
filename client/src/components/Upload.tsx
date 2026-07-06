@@ -32,17 +32,26 @@ export function Upload() {
 
     console.log('Upload successful:', uploadedDoc);
 
-    // Trigger backend AI processing
-    const processedDoc = await processDocument(uploadedDoc._id);
+    let processedDoc = uploadedDoc;
+    let serverUrl = undefined;
 
-    const storagePath = processedDoc.storagePath || "";
-
-    const filename = storagePath.split(/[\\/]/).pop();
-
-    const serverUrl =
-      filename
+    if (uploadedDoc.status === 'NEEDS_PASSWORD' || uploadedDoc.status === 'UNLOCK_FAILED') {
+      console.log('Document is password protected. Skipping automatic processing.');
+      const storagePath = uploadedDoc.storagePath || "";
+      const filename = storagePath.split(/[\\/]/).pop();
+      serverUrl = filename
         ? `http://localhost:8000/uploads/${encodeURIComponent(filename)}`
         : undefined;
+    } else {
+      // Trigger backend AI processing
+      processedDoc = await processDocument(uploadedDoc._id);
+
+      const storagePath = processedDoc.storagePath || "";
+      const filename = storagePath.split(/[\\/]/).pop();
+      serverUrl = filename
+        ? `http://localhost:8000/uploads/${encodeURIComponent(filename)}`
+        : undefined;
+    }
 
     console.log('Processing complete:', processedDoc);
 

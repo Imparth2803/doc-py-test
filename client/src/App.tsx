@@ -13,16 +13,32 @@ import { EntityView } from './components/EntityView';
 import { TimelineView } from './components/TimelineView';
 import { Dashboard } from './components/Dashboard';
 import { PricingModal } from './components/PricingModal';
+import { TableView } from './components/TableView';
 
 function AppContent() {
   const {
     currentView,
     isPricingOpen,
     setPricingOpen,
+    tablesDocumentId,
   } = useApp();
 
+  console.log('[REACT RENDER] AppContent rendered. currentView:', currentView, 'isPricingOpen:', isPricingOpen);
+
+  React.useEffect(() => {
+    console.log('[APPCONTENT EFFECT] currentView is now:', currentView);
+  }, [currentView]);
+
   return (
-    <>
+    <div 
+      onClickCapture={(e) => {
+        console.log('[REACT SYNTHETIC CLICK CAPTURE] Target:', e.target);
+      }}
+      onClick={(e) => {
+        console.log('[REACT SYNTHETIC CLICK BUBBLE] Target:', e.target);
+      }}
+      style={{ minHeight: '100vh' }}
+    >
       {(() => {
         switch (currentView) {
           case 'login':
@@ -49,18 +65,23 @@ function AppContent() {
           case 'timeline':
             return <TimelineView />;
 
+          case 'tables':
+            return <TableView documentId={tablesDocumentId} />;
+
           default:
             return <Login />;
         }
       })()}
 
-      <PricingModal
-        isOpen={isPricingOpen}
-        onClose={() =>
-          setPricingOpen(false)
-        }
-      />
-    </>
+      {isPricingOpen && (
+        <PricingModal
+          isOpen={isPricingOpen}
+          onClose={() =>
+            setPricingOpen(false)
+          }
+        />
+      )}
+    </div>
   );
 }
 

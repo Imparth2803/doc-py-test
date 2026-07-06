@@ -1,5 +1,11 @@
-# WARNING: DO NOT USE FLOATING VERSIONS (>=).
-# This subsystem is highly sensitive to ML library versions.
-# Use requirements-lock.txt for production and CI/CD.
-
--r requirements-lock.txt
+fastapi
+uvicorn
+paddlepaddle==2.6.2
+paddleocr==2.7.3
+opencv-python-headless
+PyMuPDF
+pdfplumber
+camelot-py[cv]
+pandas
+openpyxl
+numpy==1.26.4

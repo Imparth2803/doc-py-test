@@ -4,12 +4,15 @@ import React, {
   useState,
   useEffect,
   ReactNode,
+  useRef,
 } from 'react';
+import { useSocket } from '../hooks/useSocket';
 import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { ApiDocument } from '../types/api';
-import { getDocuments, updateDocument } from '../services/documentApi';
-type ViewState = 'login' | 'dashboard' | 'upload' | 'review' | 'archive' | 'tree' | 'entity' | 'timeline';
+import { getDocuments, updateDocument, getDocument } from '../services/documentApi';
+type ViewState = 'login' | 'dashboard' | 'upload' | 'review' | 'archive' | 'tree' | 'entity' | 'timeline' | 'tables';
 import { mapApiDocumentToDocument } from '../utils/documentMapper';
+import { buildPreviewUrl } from '../utils/storagePathUtils';
 
 export interface PendingDocument {
   file: File;
@@ -17,6 +20,16 @@ export interface PendingDocument {
   mimeType: string;
   serverUrl?: string;
   aiResult?: ApiDocument;
+}
+
+export interface ManualReminder {
+  id: string;
+  title: string;
+  description?: string;
+  date: string;
+  time?: string;
+  type: 'Personal' | 'Document' | 'Payment' | 'Renewal' | 'Other';
+  relatedDocId?: string;
 }
 
 interface AppState {
@@ -31,6 +44,7 @@ interface AppState {
   isPricingOpen: boolean;
   user: any | null;
   isAuthenticated: boolean;
+  tablesDocumentId: string | null;
   
   // Actions
   login: (token: string, user: any) => void;
@@ -39,13 +53,22 @@ interface AppState {
   goToUpload: () => void;
   goToArchive: () => void;
   goToTree: () => void;
-  goToEntity: () => void;
+  goToEntity: (entityName?: string) => void;
   goToTimeline: () => void;
+  goToTables: (docId: string) => void;
   setPendingDocument: (doc: PendingDocument | null) => void;
   addFolder: (folder: string) => void;
-  saveDocument: (name: string, folder: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost?: number, rupeesCost?: number, mimeType?: string) => void;
+  saveDocument: (name: string, folder: string, category: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost?: number, rupeesCost?: number, mimeType?: string) => void;
   setPricingOpen: (open: boolean) => void;
   fetchLiveDocuments: () => Promise<void>;
+  targetEntityName: string | null;
+  targetArchiveDocId: string | null;
+  targetArchiveDocType: string | null;
+  goToArchiveWithContext: (params: { documentId?: string; recommendedDocumentType?: string }) => void;
+  clearArchiveContext: () => void;
+  manualReminders: ManualReminder[];
+  addManualReminder: (reminder: Omit<ManualReminder, 'id'>) => void;
+  deleteManualReminder: (id: string) => void;
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
@@ -56,16 +79,132 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return savedView || 'login';
   });
 
+  console.log('[REACT RENDER] AppProvider rendering. currentView state:', currentView);
+
   const setCurrentView = (view: ViewState) => {
+    console.log('[STATE UPDATE] setCurrentView called with:', view);
     setCurrentViewInternal(view);
     localStorage.setItem('currentView', view);
+    console.log('[STATE UPDATE] currentView state update scheduled and localStorage set to:', view);
   };
 
+  const [tablesDocumentId, setTablesDocumentId] = useState<string | null>(null);
+  const [targetEntityName, setTargetEntityName] = useState<string | null>(null);
+  const [targetArchiveDocId, setTargetArchiveDocId] = useState<string | null>(null);
+  const [targetArchiveDocType, setTargetArchiveDocType] = useState<string | null>(null);
+  const [manualReminders, setManualReminders] = useState<ManualReminder[]>(() => {
+    const saved = localStorage.getItem('manualReminders');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [documents, setDocuments] = useState<Document[]>([]);
   const [pendingDoc, setPendingDoc] = useState<PendingDocument | null>(null);
   const [user, setUser] = useState<any>(null);
   const isAuthenticated = !!user;
   const [customFolders, setCustomFolders] = useState<string[]>([]);
+
+  const { subscribeToDocumentStatus } = useSocket();
+  const cleanupsRef = useRef<Record<string, () => void>>({});
+
+  useEffect(() => {
+    const currentCleanups = cleanupsRef.current;
+    const documentIds = documents.map(doc => doc._id);
+
+    // Unsubscribe from IDs no longer in the list
+    Object.keys(currentCleanups).forEach(id => {
+      if (!documentIds.includes(id)) {
+        console.log(`\n[SOCKET]\nUnsubscribe\nDocument:\n${id}\n----------------------------------------`);
+        currentCleanups[id]();
+        delete currentCleanups[id];
+        console.log(`\n[SOCKET]\nCleanup entry removed\nDocument:\n${id}\n----------------------------------------`);
+      }
+    });
+
+    // Subscribe to new IDs
+    documents.forEach(doc => {
+      if (!currentCleanups[doc._id]) {
+        console.log(`\n[SOCKET]\nSubscribe\nDocument:\n${doc._id}\n----------------------------------------`);
+        currentCleanups[doc._id] = subscribeToDocumentStatus(doc._id, async (newStatus) => {
+          if (newStatus === 'COMPLETED' || newStatus === 'PARTIAL_SUCCESS') {
+            try {
+              const freshApiDoc = await getDocument(doc._id);
+              const previewUrl = buildPreviewUrl(
+                freshApiDoc.storagePath,
+                undefined,
+                freshApiDoc.updatedAt || Date.now()
+              );
+              const canonicalFolder = freshApiDoc.vaultFolder || 'Uploads';
+              const freshMapped: Document = {
+                _id: freshApiDoc._id,
+                id: freshApiDoc._id,
+                name: freshApiDoc.documentName || freshApiDoc.originalName,
+                date: freshApiDoc.createdAt
+                  ? new Date(freshApiDoc.createdAt).toISOString().split('T')[0]
+                  : new Date().toISOString().split('T')[0],
+                folder: canonicalFolder,
+                vaultCategory: freshApiDoc.vaultCategory,
+                vaultFolder: freshApiDoc.vaultFolder,
+                status: freshApiDoc.status,
+                tags: freshApiDoc.tags || [],
+                entities: freshApiDoc.entities || [],
+                docType: freshApiDoc.docType || 'Document',
+                metadata: freshApiDoc.metadata || {},
+                mimeType: freshApiDoc.mimeType,
+                previewUrl,
+                pinnedFields: freshApiDoc.pinnedFields || [],
+                tables: freshApiDoc.tables
+              };
+
+              setDocuments(prevDocs =>
+                prevDocs.map(d => d._id === doc._id ? freshMapped : d)
+              );
+              setPendingDoc(prevPending => {
+                if (prevPending && prevPending.aiResult && prevPending.aiResult._id === doc._id) {
+                  return {
+                    ...prevPending,
+                    aiResult: freshApiDoc
+                  };
+                }
+                return prevPending;
+              });
+
+              // Refetch user profile to sync cumulative units (Phase 3)
+              fetchUserProfile();
+            } catch (err) {
+              console.error('Failed to re-fetch completed document', err);
+            }
+          } else {
+            setDocuments(prevDocs =>
+              prevDocs.map(d => d._id === doc._id ? { ...d, status: newStatus as any } : d)
+            );
+            setPendingDoc(prevPending => {
+              if (prevPending && prevPending.aiResult && prevPending.aiResult._id === doc._id) {
+                return {
+                  ...prevPending,
+                  aiResult: {
+                    ...prevPending.aiResult,
+                    status: newStatus as any
+                  }
+                };
+              }
+              return prevPending;
+            });
+          }
+        });
+      } else {
+        console.log(`\n[SOCKET]\nAlready subscribed\nDocument:\n${doc._id}\n----------------------------------------`);
+      }
+    });
+
+    return () => {
+      Object.keys(currentCleanups).forEach(id => {
+        console.log(`\n[SOCKET]\nUnsubscribe\nDocument:\n${id}\n----------------------------------------`);
+        currentCleanups[id]();
+        delete currentCleanups[id];
+        console.log(`\n[SOCKET]\nCleanup entry removed\nDocument:\n${id}\n----------------------------------------`);
+      });
+    };
+  }, [documents.map(d => d._id).join(','), subscribeToDocumentStatus]);
+
   const addFolder = (folderName: string) => {
     if (!folderName.trim()) return;
 
@@ -80,6 +219,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [aiUnitsUsed, setAiUnitsUsed] = useState(1245); // Seeded lifetime used
   const [aiCreditsUsed, setAiCreditsUsed] = useState(373.50); // Seeded lifetime used
   const [isPricingOpen, setIsPricingOpen] = useState(false);
+
+  const fetchUserProfile = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const response = await fetch('http://localhost:8000/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.user) {
+          setUser(data.user);
+          localStorage.setItem('user', JSON.stringify(data.user));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch user profile:', err);
+    }
+  };
+
+  // Synchronize AI Unit counters whenever user state changes
+  useEffect(() => {
+    if (user && user.usage) {
+      setAiUnitsUsed(user.usage.totalAiUnits || 0);
+      setAiCreditsUsed((user.usage.totalAiUnits || 0) * 0.30);
+    }
+  }, [user]);
+
   useEffect(() => {
     const savedUser =
       localStorage.getItem('user');
@@ -98,6 +268,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     fetchLiveDocuments();
+    fetchUserProfile();
   }, []);
   
   const setPricingOpen = (open: boolean) => setIsPricingOpen(open);
@@ -119,9 +290,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(userData);
 
     setCurrentView(
-      'dashboard'
+      'upload'
     );
-  }; // Routes to Dashboard first
+  }; // Routes to Upload screen first
   const logout = () => {
     localStorage.removeItem(
       'token'
@@ -140,12 +311,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPendingDoc(null);
   };
 
-  const goToDashboard = () => setCurrentView('dashboard');
-  const goToUpload = () => setCurrentView('upload');
-  const goToArchive = () => setCurrentView('archive');
-  const goToTree = () => setCurrentView('tree');
-  const goToEntity = () => setCurrentView('entity');
-  const goToTimeline = () => setCurrentView('timeline');
+  const goToDashboard = () => {
+    console.log('[CALLBACK] goToDashboard called');
+    setCurrentView('dashboard');
+  };
+  const goToUpload = () => {
+    console.log('[CALLBACK] goToUpload called');
+    setCurrentView('upload');
+  };
+  const goToArchive = () => {
+    console.log('[CALLBACK] goToArchive called');
+    setCurrentView('archive');
+  };
+  const goToArchiveWithContext = (params: { documentId?: string; recommendedDocumentType?: string }) => {
+    console.log('[CALLBACK] goToArchiveWithContext called with:', params);
+    setTargetArchiveDocId(params.documentId || null);
+    setTargetArchiveDocType(params.recommendedDocumentType || null);
+    setCurrentView('archive');
+  };
+  const clearArchiveContext = () => {
+    setTargetArchiveDocId(null);
+    setTargetArchiveDocType(null);
+  };
+  const addManualReminder = (reminder: Omit<ManualReminder, 'id'>) => {
+    const newReminder = {
+      ...reminder,
+      id: Math.random().toString(36).substring(2, 9)
+    };
+    setManualReminders(prev => {
+      const updated = [...prev, newReminder];
+      localStorage.setItem('manualReminders', JSON.stringify(updated));
+      return updated;
+    });
+  };
+  const deleteManualReminder = (id: string) => {
+    setManualReminders(prev => {
+      const updated = prev.filter(r => r.id !== id);
+      localStorage.setItem('manualReminders', JSON.stringify(updated));
+      return updated;
+    });
+  };
+  const goToTree = () => {
+    console.log('[CALLBACK] goToTree called');
+    setCurrentView('tree');
+  };
+  const goToEntity = (entityName?: string) => {
+    console.log('[CALLBACK] goToEntity called with:', entityName);
+    setTargetEntityName(entityName || null);
+    setCurrentView('entity');
+  };
+  const goToTimeline = () => {
+    console.log('[CALLBACK] goToTimeline called');
+    setCurrentView('timeline');
+  };
+  const goToTables = (docId: string) => {
+    console.log('[CALLBACK] goToTables called for doc:', docId);
+    setTablesDocumentId(docId);
+    setCurrentView('tables');
+  };
   const fetchLiveDocuments = async () => {
   try {
     const docs = await getDocuments();
@@ -158,15 +381,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const mappedDocs: Document[] = docs.map(
       (doc: any) => {
 
-        const filename =
-          doc.storagePath
-            ?.split(/[\\/]/)
-            .pop();
+        const previewUrl = buildPreviewUrl(
+          doc.storagePath,
+          undefined,
+          doc.updatedAt || Date.now()
+        );
 
-        const previewUrl =
-          filename
-            ? `http://localhost:8000/uploads/${encodeURIComponent(filename)}?v=${new Date(doc.updatedAt || Date.now()).getTime()}`
-            : undefined;
+        const canonicalFolder = doc.vaultFolder || 'Uploads';
+        console.log(`[FETCH DOCUMENT] id=${doc._id} folder=${canonicalFolder} vaultFolder=${doc.vaultFolder || 'none'}`);
 
         return {
           _id: doc._id,
@@ -185,15 +407,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 .toISOString()
                 .split('T')[0],
 
-          folder:
-            doc.vaultFolder ||
-            'Uploads',
+          folder: canonicalFolder,
 
           vaultCategory:
             doc.vaultCategory,
 
           vaultFolder:
             doc.vaultFolder,
+
+          status:
+            doc.status,
 
           tags:
             doc.tags || [],
@@ -211,7 +434,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           mimeType:
             doc.mimeType,
 
-          previewUrl
+          previewUrl,
+
+          pinnedFields: doc.pinnedFields || [],
+          
+          tables: doc.tables
         };
       }
     );
@@ -232,21 +459,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const saveDocument = async (name: string, folder: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost = 5, rupeesCost = 1.5, mimeType?: string) => {
+  const saveDocument = async (name: string, folder: string, category: string, tags: string[], previewUrl: string, entities: string[], docType: string, metadata: Record<string, string | undefined>, unitsCost = 5, rupeesCost = 1.5, mimeType?: string) => {
     try {
+      console.log(`[SAVE DOCUMENT] folder=${folder} vaultFolder=${folder} vaultCategory=${category}`);
+
       if (pendingDoc?.aiResult?._id) {
         const documentId = pendingDoc.aiResult._id;
         
         // Prepare updates for backend
-        const updates: Partial<ApiDocument> = {
+        // Future cleanup:
+        // Remove metadata.folder entirely.
+        // Use vaultFolder as the only persisted folder field.
+        const updates: Partial<ApiDocument> & { vaultFolder: string; vaultCategory: string } = {
           originalName: name,
           tags,
           entities,
           docType,
+          vaultFolder: folder,
+          vaultCategory: category,
           metadata: {
             ...(metadata as any),
             summaryFields: (metadata as any).summaryFields || {}, // Explicitly preserve summaryFields
-            folder // Store folder in metadata since schema doesn't have it
+            folder // Store folder in metadata since schema doesn't have it (migration fallback)
           }
         };
 
@@ -261,12 +495,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         name,
         date: new Date().toISOString().split('T')[0],
         folder,
+        vaultFolder: folder,
+        vaultCategory: category,
         tags,
         previewUrl,
         entities,
         docType,
-        metadata,
-        mimeType
+        metadata: {
+          ...metadata,
+          folder // migration fallback
+        },
+        mimeType,
+        pinnedFields: pendingDoc?.aiResult?.pinnedFields || []
       };
       
       setDocuments(prev => {
@@ -291,6 +531,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       
       // Force a fresh fetch from backend to ensure synchronization
       await fetchLiveDocuments();
+      await fetchUserProfile();
 
     } catch (error) {
       console.error('Failed to save document:', error);
@@ -311,19 +552,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       isPricingOpen,
       user,
       isAuthenticated,
+      tablesDocumentId,
+      targetEntityName,
+      targetArchiveDocId,
+      targetArchiveDocType,
       addFolder,
       login,
       logout,
       goToDashboard,
       goToUpload,
       goToArchive,
+      goToArchiveWithContext,
+      clearArchiveContext,
       goToTree,
       goToEntity,
       goToTimeline,
+      goToTables,
       setPendingDocument,
       saveDocument,
       setPricingOpen,
       fetchLiveDocuments,
+      manualReminders,
+      addManualReminder,
+      deleteManualReminder,
     }}>
       {children}
     </AppContext.Provider>

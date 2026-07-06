@@ -10,3 +10,9 @@ server/uploads/
 
 venv/
 __pycache__/
+
+# Build and IDE outputs
+server/dist/
+.vscode/
+*.DS_Store
+*.pdf

@@ -82,7 +82,10 @@ export function TopNav({ activeTab }: { activeTab?: 'hub' | 'archive' | 'tree' |
 function NavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
   return (
     <button 
-      onClick={onClick}
+      onClick={() => {
+        console.log(`[BUTTON CLICK] NavButton "${label}" onClick triggered`);
+        onClick();
+      }}
       className={cn(
         "px-4 py-2 text-sm font-bold rounded-xl transition-all flex items-center gap-2", 
         active 

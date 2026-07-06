@@ -4,7 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon src/index.ts"
+    "dev:server": "nodemon src/index.ts",
+    "dev:ocr": "source venv/bin/activate && python -m uvicorn src.services.ocr.ocr_server:app --port 8001",
+    "dev:gliner": "source venv/bin/activate && python -m uvicorn src.services.gliner.gliner_server:app --port 8002",
+    "dev:tables": "source venv/bin/activate && python -m uvicorn src.services.ocr.table_server:app --port 8003",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:ocr\" \"npm run dev:gliner\" \"npm run dev:tables\""
   },
   "keywords": [],
   "author": "",
@@ -12,17 +16,21 @@
   "dependencies": {
     "@google/genai": "^2.5.0",
     "axios": "^1.16.1",
+    "bullmq": "^5.78.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
+    "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.2.0",
     "mongoose": "^9.6.2",
     "multer": "^2.1.1",
-    "pdf-parse": "^1.1.1",
+    "nodemailer": "^9.0.1",
     "sharp": "^0.34.5",
-    "tesseract.js": "^7.0.0"
+    "socket.io": "^4.8.3",
+    "tesseract.js": "^7.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -30,7 +38,8 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
     "@types/node": "^25.7.0",
-    "@types/pdf-parse": "^1.1.5",
+    "@types/nodemailer": "^8.0.1",
+    "concurrently": "^8.2.2",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"

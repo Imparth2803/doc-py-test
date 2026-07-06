@@ -1,5 +1,4 @@
 import fs from 'fs';
-const pdfParse = require('pdf-parse');
 import path from 'path';
 import sharp from 'sharp';
 import axios from 'axios';
@@ -55,7 +54,9 @@ export const validateOCRServiceHealth = async () => {
   }
 };
 
-export const extractTextAndEvaluate = async (filePath: string, mimeType: string) => {
+import { extractPdfText } from './pdf/pdfTextExtractor';
+
+export const extractTextAndEvaluate = async (filePath: string, mimeType: string, language: string = 'en') => {
   const perfStart = Date.now();
   console.log('[PERF] OCR Start');
   let extractedText = "";
@@ -64,23 +65,35 @@ export const extractTextAndEvaluate = async (filePath: string, mimeType: string)
   let orientationConfidence = 0;
   let pageCount = 1; // Default for images
   let strategy: 'DIGITAL_DOCUMENT' | 'SCANNED_DOCUMENT' = 'SCANNED_DOCUMENT';
+  let pdfExtractionDiag: any = undefined;
 
   try {
     if (mimeType === 'application/pdf') {
-      const dataBuffer = fs.readFileSync(filePath);
-      const pdfData = await pdfParse(dataBuffer);
-      extractedText = pdfData.text.trim();
-      pageCount = pdfData.numpages || 1;
+      const pdfResult = await extractPdfText(filePath);
+      pageCount = pdfResult.pageCount || 1;
       
-      // Digital PDFs have a lot of embedded text. Scanned PDFs return almost nothing.
-      if (extractedText.length > 50) {
+      pdfExtractionDiag = {
+        engine: "PyMuPDF",
+        success: pdfResult.success,
+        pageCount: pdfResult.pageCount,
+        textLength: pdfResult.text.length,
+        ...(pdfResult.error ? { error: pdfResult.error } : {})
+      };
+
+      if (pdfResult.success && pdfResult.text.length > 50) {
+        extractedText = pdfResult.text.trim();
         confidence = 100;
         angle = 0;
         orientationConfidence = 1.0;
         strategy = 'DIGITAL_DOCUMENT';
       } else {
-        confidence = 0; 
+        extractedText = pdfResult.text.trim();
+        confidence = 0;
         strategy = 'SCANNED_DOCUMENT';
+        
+        if (!pdfResult.success) {
+          console.error(`[PDF EXTRACTION FAILED] Document: ${path.basename(filePath)} Reason: ${pdfResult.error || 'Unknown error'} Fallback: OCR`);
+        }
       }
     } 
     else if (mimeType.startsWith('image/')) {
@@ -107,10 +120,9 @@ export const extractTextAndEvaluate = async (filePath: string, mimeType: string)
           ocrFilePath = tempFilePath;
         }
 
-        // Use multilingual model (hi) which inherently supports English
         const result = await runPaddleOCR(
           ocrFilePath,
-          "hi"
+          language
         );
 
         extractedText =
@@ -143,13 +155,30 @@ export const extractTextAndEvaluate = async (filePath: string, mimeType: string)
       }
     }
 
+    console.log("================ [OCR TELEMETRY START] ================");
+    console.log(`[OCR SUCCESS] File: ${path.basename(filePath)} | Length: ${extractedText ? extractedText.length : 0} characters`);
+    console.log(`[OCR TEXT RAW PREVIEW]:\n${extractedText ? extractedText.substring(0, 500) : "--- EMPTY TEXT PAYLOAD ---"}`);
+    console.log("================ [OCR TELEMETRY END] ================");
+
     const duration = Date.now() - perfStart;
     console.log(`[PERF] OCR End - ${duration}ms`);
-    return { extractedText, confidence, strategy, angle, orientationConfidence, pageCount };
-  } catch (error) {
+    return { extractedText, confidence, strategy, angle, orientationConfidence, pageCount, pdfExtraction: pdfExtractionDiag };
+  } catch (error: any) {
     const duration = Date.now() - perfStart;
     console.log(`[PERF] OCR End (Error) - ${duration}ms`);
     console.error("OCR Pipeline Error:", error);
-    return { extractedText: "", confidence: 0, strategy: 'SCANNED_DOCUMENT' as const, angle: 0, orientationConfidence: 0, pageCount: 1 };
+    return { 
+      extractedText: "", 
+      confidence: 0, 
+      strategy: 'SCANNED_DOCUMENT' as const, 
+      angle: 0, 
+      orientationConfidence: 0, 
+      pageCount: 1,
+      pdfExtraction: {
+        engine: "PyMuPDF",
+        success: false,
+        error: error.message || String(error)
+      }
+    };
   }
 };

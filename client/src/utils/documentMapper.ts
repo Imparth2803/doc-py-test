@@ -1,18 +1,11 @@
 import { ApiDocument } from '../types/api';
 import { Document } from '../types';
+import { buildPreviewUrl } from './storagePathUtils';
 
 export const mapApiDocumentToDocument = (
   doc: ApiDocument
 ): Document => {
-  const filename =
-    doc.storagePath
-        ?.split(/[\\/]/)
-        .pop();
-
-  const previewUrl =
-    filename
-    ? `http://localhost:8000/uploads/${encodeURIComponent(filename)}`
-    : '';
+  const previewUrl = buildPreviewUrl(doc.storagePath) || '';
 
     console.log(
     "MAPPING",
@@ -28,6 +21,7 @@ export const mapApiDocumentToDocument = (
   return {
     id: doc._id,
     name: doc.documentName || doc.originalName,
+    originalName: doc.originalName,
 
     date: doc.createdAt
       ? doc.createdAt.split('T')[0]
@@ -49,8 +43,14 @@ export const mapApiDocumentToDocument = (
 
     mimeType: doc.mimeType,
 
+    status: doc.status,
+
     previewUrl,
 
-    _id: doc._id
+    _id: doc._id,
+
+    pinnedFields: doc.pinnedFields || [],
+    
+    tables: doc.tables
   };
 };

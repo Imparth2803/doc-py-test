@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { getGLiNERUrl } from '../../config/serviceUrls';
 import { GLiNEREntities, GLiNERResult } from './types';
+import { sanitizeEntities, printSanitizationReport } from './entitySanitizer';
+import { extractStakeholders } from './stakeholderExtractor';
 
 export const validateGLiNERServiceHealth = async () => {
   const glinerUrl = getGLiNERUrl();
@@ -20,12 +22,24 @@ export const validateGLiNERServiceHealth = async () => {
 export const extractEntitiesWithGLiNER = async (text: string): Promise<GLiNERResult> => {
   const defaultEntities: GLiNEREntities = {
     persons: [],
-    organizations: [],
-    locations: []
+    organizations: []
   };
 
   if (!text || text.trim().length === 0) {
-    return { entities: defaultEntities, rawEntities: [], chunkCount: 0, avgConfidence: 0, latencyMs: 0 };
+    return { 
+      entities: defaultEntities, 
+      rawEntities: [], 
+      chunkCount: 0, 
+      avgConfidence: 0, 
+      latencyMs: 0,
+      stakeholders: [],
+      stakeholderDiagnostics: {
+        glinerEntitiesRaw: [],
+        glinerEntitiesRanked: [],
+        entityScores: {},
+        entityLabels: {}
+      }
+    };
   }
 
   const startTime = Date.now();
@@ -40,6 +54,15 @@ export const extractEntitiesWithGLiNER = async (text: string): Promise<GLiNERRes
     const latencyMs = Date.now() - startTime;
     const data = response.data;
     
+    // Quality Gate: Sanitize entities before returning
+    const { entities: sanitizedEntities, diagnostics } = sanitizeEntities(data.raw_entities || []);
+    
+    // Log report for benchmarking/observability
+    printSanitizationReport(diagnostics);
+
+    // Stakeholder selection engine
+    const { entities: stakeholderEntities, diagnostics: stakeholderDiagnostics } = extractStakeholders(data.raw_entities || [], text);
+
     let avgConfidence = 0;
     if (data.raw_entities && data.raw_entities.length > 0) {
       const sum = data.raw_entities.reduce((acc: number, curr: any) => acc + curr.confidence, 0);
@@ -47,15 +70,14 @@ export const extractEntitiesWithGLiNER = async (text: string): Promise<GLiNERRes
     }
 
     return {
-      entities: {
-        persons: data.persons || [],
-        organizations: data.organizations || [],
-        locations: data.locations || []
-      },
+      entities: sanitizedEntities,
       rawEntities: data.raw_entities || [],
       chunkCount: data.chunk_count || 1,
       avgConfidence,
-      latencyMs
+      latencyMs,
+      sanitization: diagnostics,
+      stakeholders: stakeholderEntities,
+      stakeholderDiagnostics
     };
   } catch (error: any) {
     const latencyMs = Date.now() - startTime;
@@ -65,7 +87,14 @@ export const extractEntitiesWithGLiNER = async (text: string): Promise<GLiNERRes
       rawEntities: [],
       chunkCount: 0,
       avgConfidence: 0,
-      latencyMs
+      latencyMs,
+      stakeholders: [],
+      stakeholderDiagnostics: {
+        glinerEntitiesRaw: [],
+        glinerEntitiesRanked: [],
+        entityScores: {},
+        entityLabels: {}
+      }
     };
   }
 };

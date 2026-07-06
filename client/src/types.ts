@@ -34,6 +34,7 @@ export type Document = {
   _id: string;
   id: string; // Internal React key / legacy compatibility
   name: string;
+  originalName?: string;
   date: string;
   folder: string;
   vaultCategory?: string;
@@ -41,10 +42,20 @@ export type Document = {
   tags: DocumentTag[];
   previewUrl?: string; // a data URL for preview
   mimeType?: string;
+  status?: string;
   processingStrategy?: 'DIGITAL_DOCUMENT' | 'SCANNED_DOCUMENT' | 'TEXT_ONLY' | 'VISION_FALLBACK' | 'PENDING';
   entities: string[];
   docType?: string;
   metadata?: Record<string, any>;
+  pinnedFields?: string[];
   extractedText?: string;
+  tables?: any;
+  ocrConfidence?: number;
+  processingCheckpoint?: {
+    ocrCompleted: boolean;
+    enrichmentCompleted: boolean;
+    tablesCompleted: boolean;
+    aiCompleted: boolean;
+  };
 };
 

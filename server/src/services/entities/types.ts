@@ -1,13 +1,14 @@
 export interface GLiNEREntities {
   persons: string[];
   organizations: string[];
-  locations: string[];
 }
 
 export interface GLiNEREntity {
   text: string;
   label: string;
   confidence: number;
+  start?: number;
+  end?: number;
 }
 
 export interface EntityComparisonResult {
@@ -20,10 +21,25 @@ export interface EntityComparisonResult {
   glinerOnly: string[];
 }
 
+export interface GLiNERSanitizationDiagnostics {
+  rawCount: number;
+  filteredNumbers: number;
+  filteredIDs: number;
+  filteredDates: number;
+  filteredLowConfidence: number;
+  filteredGarbage: number;
+  filteredOrganizationValidation: number;
+  filteredPersonValidation: number;
+  finalCount: number;
+}
+
 export interface GLiNERResult {
   entities: GLiNEREntities;
   rawEntities: GLiNEREntity[];
   chunkCount: number;
   avgConfidence: number;
   latencyMs: number;
+  sanitization?: GLiNERSanitizationDiagnostics;
+  stakeholders?: string[];
+  stakeholderDiagnostics?: any;
 }

@@ -1,15 +1,16 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { TopNav } from './TopNav';
 import { Document, FOLDER_TEMPLATES, ALL_FOLDERS } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles, Search } from 'lucide-react';
+import { ChevronRight, Folder, User, FileText, Calendar, X, Share2, Plus, Sparkles, Search, Lock, Unlock } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
-import { uploadDocument, processDocument } from '../services/documentApi';
+import { uploadDocument, processDocument, decryptDocument } from '../services/documentApi';
 import { ShareModal } from './ShareModal';
+import { mapApiDocumentToDocument } from '../utils/documentMapper';
 
 export function EntityView() {
-  const { documents, customFolders, goToUpload, setPendingDocument, fetchLiveDocuments } = useApp();
+  const { documents, customFolders, goToUpload, setPendingDocument, fetchLiveDocuments, targetEntityName, goToEntity } = useApp();
 
   // state to track expanded categories and entities
   const [expandedEntities, setExpandedEntities] = useState<Set<string>>(new Set());
@@ -17,6 +18,46 @@ export function EntityView() {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   const [shareDoc, setShareDoc] = useState<Document | null>(null);
+
+  const [modalPassword, setModalPassword] = useState('');
+  const [modalIsDecrypting, setModalIsDecrypting] = useState(false);
+  const [modalIsProcessing, setModalIsProcessing] = useState(false);
+  const [modalErrorMsg, setModalErrorMsg] = useState<string | null>(null);
+
+  const handleModalDecrypt = async (docId: string) => {
+    if (!modalPassword.trim()) return;
+    setModalIsDecrypting(true);
+    setModalErrorMsg(null);
+    try {
+      const updatedDoc = await decryptDocument(docId, modalPassword);
+      setModalPassword('');
+      const mapped = mapApiDocumentToDocument(updatedDoc);
+      setViewingDoc(mapped);
+      await fetchLiveDocuments();
+    } catch (err: any) {
+      console.error(err);
+      setModalErrorMsg(err.message || 'Decryption failed');
+    } finally {
+      setModalIsDecrypting(false);
+    }
+  };
+
+  const handleModalAnalyze = async (docId: string) => {
+    setModalIsProcessing(true);
+    setModalErrorMsg(null);
+    try {
+      const updatedDoc = await processDocument(docId);
+      const mapped = mapApiDocumentToDocument(updatedDoc);
+      setViewingDoc(mapped);
+      await fetchLiveDocuments();
+    } catch (err: any) {
+      console.error(err);
+      setModalErrorMsg(err.message || 'Analysis failed');
+    } finally {
+      setModalIsProcessing(false);
+    }
+  };
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,7 +155,6 @@ export function EntityView() {
 
     const folder =
       doc.folder ||
-      doc.vaultFolder ||
       'Unsorted';
 
     entities.forEach(entity => {
@@ -145,6 +185,46 @@ export function EntityView() {
 
   return rootMap;
   }, [documents, customFolders, searchTerm]);
+
+  // Automatically expand and scroll to target entity on navigation (e.g. from Dashboard)
+  useEffect(() => {
+    if (targetEntityName) {
+      // Expand the matched entity
+      setExpandedEntities(prev => {
+        const copy = new Set(prev);
+        copy.add(targetEntityName);
+        return copy;
+      });
+
+      // Expand all folders under this entity so the user sees the associated documents immediately
+      const foldersMap = treeData.get(targetEntityName);
+      if (foldersMap) {
+        setExpandedFolders(prev => {
+          const copy = new Set(prev);
+          Array.from(foldersMap.keys()).forEach(folder => {
+            copy.add(`${targetEntityName}-${folder}`);
+          });
+          return copy;
+        });
+      }
+
+      // Scroll to the selected entity card smoothly
+      setTimeout(() => {
+        const element = document.getElementById(`entity-${targetEntityName}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Flash or highlight to draw user's attention
+          element.classList.add('bg-purple-50', 'ring-2', 'ring-purple-500/20');
+          setTimeout(() => {
+            element.classList.remove('bg-purple-50', 'ring-2', 'ring-purple-500/20');
+          }, 2500);
+        }
+      }, 100);
+
+      // Clear navigation trigger in context so it does not fire again on subsequent tab changes
+      goToEntity(undefined);
+    }
+  }, [targetEntityName, treeData]);
 
   return (
     <div className="min-h-screen bg-[#fafafc] flex flex-col font-sans relative pb-24">
@@ -199,6 +279,7 @@ export function EntityView() {
                 return (
                   <div key={ent} className="mb-2">
                      <div 
+                       id={`entity-${ent}`}
                        className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-xl cursor-pointer transition-colors"
                        onClick={() => toggleEntity(ent)}
                      >
@@ -322,7 +403,13 @@ export function EntityView() {
                </button>
 
                <div className="w-full md:w-1/2 bg-gray-50 flex items-center justify-center border-b md:border-b-0 md:border-r border-gray-100 relative min-h-[300px] md:min-h-[500px]">
-                 {viewingDoc.previewUrl && (!viewingDoc.mimeType || viewingDoc.mimeType.startsWith('image/')) ? (
+                 {viewingDoc.status === 'NEEDS_PASSWORD' || viewingDoc.status === 'UNLOCK_FAILED' ? (
+                   <div className="flex flex-col items-center justify-center text-red-500 p-8 text-center">
+                      <Lock size={48} className="mb-4 text-red-400" />
+                      <p className="font-bold text-gray-700 text-sm">Document Encrypted</p>
+                      <p className="text-xs text-gray-400 max-w-[220px] mt-1">Please enter password on the right to decrypt and view document.</p>
+                   </div>
+                 ) : viewingDoc.previewUrl && (!viewingDoc.mimeType || viewingDoc.mimeType.startsWith('image/')) ? (
                    <img src={viewingDoc.previewUrl} className="w-full h-full object-contain max-h-[70vh] p-4" alt="" />
                  ) : viewingDoc.previewUrl && viewingDoc.mimeType === 'application/pdf' ? (
                    <object data={viewingDoc.previewUrl} type="application/pdf" className="w-full h-full min-h-[500px] border-none">
@@ -342,6 +429,63 @@ export function EntityView() {
                <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh] break-words">
                   <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8 break-words">{viewingDoc.name}</h2>
                   
+                  {/* Decryption/Analysis Actions inside Viewer Modal */}
+                  {(viewingDoc.status === 'NEEDS_PASSWORD' || viewingDoc.status === 'UNLOCK_FAILED') && (
+                    <div className="mb-6 p-4 bg-red-50/80 rounded-[16px] border border-red-100 flex flex-col gap-2">
+                      <div className="flex items-center gap-2 text-red-700 font-bold text-xs uppercase tracking-wider">
+                        <Lock size={12} className="text-red-500" />
+                        <span>Password Protected PDF</span>
+                      </div>
+                      <p className="text-[11px] text-red-500 leading-normal">This document is encrypted. Decryption is required before preview or analysis.</p>
+                      {modalErrorMsg && <p className="text-[11px] font-medium text-red-700">{modalErrorMsg}</p>}
+                      <div className="flex gap-2">
+                        <input 
+                          type="password"
+                          placeholder="Password..."
+                          value={modalPassword}
+                          onChange={e => setModalPassword(e.target.value)}
+                          disabled={modalIsDecrypting}
+                          className="flex-1 px-3 py-1.5 border border-red-200 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-red-400"
+                        />
+                        <button 
+                          onClick={() => handleModalDecrypt(viewingDoc._id)}
+                          disabled={modalIsDecrypting || !modalPassword.trim()}
+                          className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 active:scale-95 flex items-center gap-1"
+                        >
+                          {modalIsDecrypting ? 'Unlocking...' : 'Decrypt'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {viewingDoc.status === 'DECRYPTED' && (
+                    <div className="mb-6 p-4 bg-blue-50/70 rounded-[16px] border border-blue-100/50 flex flex-col gap-2">
+                      <div className="flex items-center gap-2 text-blue-700 font-bold text-xs uppercase tracking-wider">
+                        <Unlock size={12} className="text-blue-500" />
+                        <span>Decrypted & Ready</span>
+                      </div>
+                      <p className="text-[11px] text-blue-500 leading-normal">Manual decryption succeeded. Verify preview on left, then start AI analysis.</p>
+                      {modalErrorMsg && <p className="text-[11px] font-medium text-red-700">{modalErrorMsg}</p>}
+                      <button 
+                        onClick={() => handleModalAnalyze(viewingDoc._id)}
+                        disabled={modalIsProcessing}
+                        className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 active:scale-95 shadow-md shadow-blue-500/10"
+                      >
+                        {modalIsProcessing ? 'Analyzing...' : 'Analyze Document'}
+                      </button>
+                    </div>
+                  )}
+
+                  {viewingDoc.status === 'PROCESSING' && (
+                    <div className="mb-6 p-4 bg-gray-50 rounded-[16px] border border-gray-100 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-gray-500 font-bold text-xs uppercase tracking-wider animate-pulse">
+                        <div className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></div>
+                        <span>Analyzing...</span>
+                      </div>
+                      <div className="w-4 h-4 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin"></div>
+                    </div>
+                  )}
+
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -369,7 +513,7 @@ export function EntityView() {
                           {Object.entries(viewingDoc.metadata).map(([key, val]) => (isValidMetadata(val) && key !== 'summaryFields') ? (
                              <div key={key}>
                                 <span className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                                <span className="font-medium text-gray-900">{val}</span>
+                                <span className="font-medium text-gray-900">{typeof val === 'object' ? JSON.stringify(val) : val}</span>
                              </div>
                           ) : null)}
                         </div>

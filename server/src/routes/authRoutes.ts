@@ -6,6 +6,7 @@ import { Router } from "express";
 import {
   googleLogin,
   getCurrentUser,
+  getGoogleToken,
 } from "../controllers/authController";
 
 import {
@@ -29,6 +30,15 @@ router.get(
   "/me",
   authenticateUser,
   getCurrentUser
+);
+
+/**
+ * GET /api/auth/token
+ */
+router.get(
+  "/token",
+  authenticateUser,
+  getGoogleToken
 );
 
 export default router;

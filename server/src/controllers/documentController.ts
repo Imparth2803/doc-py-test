@@ -5,6 +5,13 @@ import ProcessingJob from '../models/ProcessingJob';
 import mongoose from 'mongoose';
 import fs from 'fs';
 import sharp from 'sharp';
+import { addDocumentJob, isQueueEnabled } from '../queue/documentQueue';
+import { getQueueEvents } from '../queue/queueEvents';
+import { checkAndDecryptPDF } from '../utils/pdfDecryptor';
+import { emitDocumentStatus } from '../services/socket';
+
+// ... other imports ...
+
 /**
  * Upload Document
  */
@@ -38,6 +45,53 @@ export const uploadDocument = async (
       return;
     }
 
+    // Intercept PDF upload to check for encryption
+    if (req.file.mimetype === 'application/pdf') {
+      let parsedProfile = {};
+      if (req.body?.userProfile) {
+        try {
+          parsedProfile = typeof req.body.userProfile === 'string'
+            ? JSON.parse(req.body.userProfile)
+            : req.body.userProfile;
+        } catch (e) {
+          console.error("Failed to parse userProfile:", e);
+        }
+      }
+
+      const result = await checkAndDecryptPDF(req.file.path, parsedProfile);
+      if (result.isEncrypted) {
+        if (result.decrypted) {
+          console.log(`[DECRYPT] Auto-unlock succeeded for ${req.file.originalname}`);
+        } else {
+          console.log(`[DECRYPT] Auto-unlock failed for ${req.file.originalname}. NEEDS_PASSWORD status applied.`);
+          
+          const document = await Document.create({
+            originalName: req.file.originalname,
+            storagePath: req.file.path,
+            mimeType: req.file.mimetype,
+            status: 'NEEDS_PASSWORD',
+          });
+
+          emitDocumentStatus(document._id.toString(), 'NEEDS_PASSWORD');
+
+          const job = await ProcessingJob.create({
+            documentId: document._id,
+            status: 'PENDING',
+            errorMessage: 'Password protected PDF. Decryption required.',
+          });
+
+          res.status(200).json({
+            success: true,
+            message: 'Password required',
+            document,
+            job,
+          });
+
+          return;
+        }
+      }
+    }
+
     // STEP 3
     console.log('\n[STEP 3] File details');
 
@@ -55,6 +109,18 @@ export const uploadDocument = async (
     });
 
     console.log('\n✅ DOCUMENT CREATED');
+
+    const fileStats = fs.statSync(req.file.path);
+    const path = require('path');
+    console.log('\n[UPLOAD]');
+    console.log('Document ID:', document._id.toString());
+    console.log('Original Name:', req.file.originalname);
+    console.log('Stored Filename:', path.basename(req.file.path));
+    console.log('Storage Path:', req.file.path);
+    console.log('MIME Type:', req.file.mimetype);
+    console.log('File Size (bytes):', fileStats.size);
+    console.log('Last Modified Time:', fileStats.mtime);
+    console.log('----------------------------------------\n');
 
     console.log('DOCUMENT:', document);
 
@@ -139,6 +205,21 @@ export const getDocuments = async (
 
     console.log('DOCUMENT COUNT:', documents.length);
 
+    const fileSys = require('fs');
+    const { buildPreviewUrl } = require('../utils/storagePathUtils');
+    console.log('\n--- [DATABASE MULTI-FETCH] ---');
+    documents.slice(0, 3).forEach(doc => {
+      const pUrl = buildPreviewUrl(doc.storagePath, undefined, doc);
+      console.log(`[DATABASE]`);
+      console.log('Document ID:', doc._id.toString());
+      console.log('storagePath:', doc.storagePath);
+      console.log('originalName:', doc.originalName);
+      console.log('documentName:', doc.documentName || 'N/A');
+      console.log('previewUrl:', pUrl);
+      console.log('storagePath exists:', fileSys.existsSync(doc.storagePath));
+      console.log('----------------------------------------');
+    });
+
     res.status(200).json({
       success: true,
       documents,
@@ -184,6 +265,18 @@ export const getDocumentById = async (
     }
 
     console.log('\n✅ DOCUMENT FOUND');
+
+    const fileSys = require('fs');
+    const { buildPreviewUrl } = require('../utils/storagePathUtils');
+    const pUrl = buildPreviewUrl(document.storagePath, undefined, document);
+    console.log('\n[DATABASE]');
+    console.log('Document ID:', document._id.toString());
+    console.log('storagePath:', document.storagePath);
+    console.log('originalName:', document.originalName);
+    console.log('documentName:', document.documentName || 'N/A');
+    console.log('previewUrl:', pUrl);
+    console.log('storagePath exists:', fileSys.existsSync(document.storagePath));
+    console.log('----------------------------------------\n');
 
     res.status(200).json({
       success: true,
@@ -295,28 +388,55 @@ export const updateDocument = async (
 export const processDocument = async (req: any, res: any) => {
   try {
     const { id } = req.params;
+    const language = req.body?.language || req.query?.language || 'en';
 
-    const result = await processDocumentWithAI(id);
 
-    res.json({
-      success: true,
-      document: result,
-      warnings: result.status === 'PARTIAL_SUCCESS' ? ['AI analysis unavailable'] : []
-    });
-  } catch (error: any) {
-    console.error(error);
-
-    if (error.name === 'AIQuotaExceededError' || error.errorCode === 'AI_QUOTA_EXCEEDED' || error.status === 429) {
-      return res.status(429).json({
-        success: false,
-        errorCode: "AI_QUOTA_EXCEEDED",
-        message: "AI processing quota exceeded. Please try again later.",
-      });
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({ success: false, message: 'Document not found' });
     }
 
+    // Ensure document status is set to PROCESSING
+    if (document.status !== 'PROCESSING') {
+      document.status = 'PROCESSING';
+      document.processingStartedAt = new Date();
+      document.processingCompletedAt = undefined;
+      document.processingFailedAt = undefined;
+      await document.save();
+      emitDocumentStatus(document._id.toString(), 'PROCESSING');
+    }
+
+    // Find or create associated processing job
+    let jobDoc = await ProcessingJob.findOne({ documentId: document._id });
+    if (!jobDoc) {
+      jobDoc = await ProcessingJob.create({
+        documentId: document._id,
+        status: 'PENDING',
+      });
+    } else {
+      jobDoc.status = 'PENDING';
+      jobDoc.attempts = 0;
+      jobDoc.startedAt = undefined;
+      jobDoc.completedAt = undefined;
+      jobDoc.failedAt = undefined;
+      jobDoc.errorMessage = undefined;
+      await jobDoc.save();
+    }
+
+    console.log(`[PROCESS] Enqueueing BullMQ Job for document ${id} with language ${language}`);
+    const bullJob = await addDocumentJob(id, jobDoc._id.toString(), language);
+
+    res.status(202).json({
+      success: true,
+      message: 'Processing started',
+      document,
+      job: jobDoc,
+    });
+  } catch (error: any) {
+    console.error('[PROCESS_ERROR]', error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Document processing failed',
+      message: error.message || 'Failed to start document processing',
     });
   }
 };
@@ -365,7 +485,8 @@ export const rotateDocument = async (
     }
 
     // 6. Read storagePath
-    const storagePath = document.storagePath;
+    const { getAbsoluteStoragePath } = require('../utils/storagePathUtils');
+    const storagePath = getAbsoluteStoragePath(document.storagePath);
 
     // 7. Create temp file
     tempPath = `${storagePath}.tmp.jpg`;
@@ -396,6 +517,400 @@ export const rotateDocument = async (
     res.status(500).json({
       success: false,
       message: error.message || 'Manual rotation failed',
+    });
+  }
+};
+
+/**
+ * Manually decrypts a password protected PDF
+ */
+export const decryptManualDocument = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { password } = req.body;
+
+    if (!password) {
+      res.status(400).json({
+        success: false,
+        error: "Decryption failed. A password is required.",
+      });
+      return;
+    }
+
+    const document = await Document.findById(id);
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        error: "Document not found.",
+      });
+      return;
+    }
+
+    const { getAbsoluteStoragePath } = require('../utils/storagePathUtils');
+    const absolutePath = getAbsoluteStoragePath(document.storagePath);
+
+    // Call checkAndDecryptPDF passing the storagePath and manualPassword
+    const result = await checkAndDecryptPDF(absolutePath, {}, password);
+
+    if (!result.decrypted) {
+      res.status(400).json({
+        success: false,
+        error: "Decryption failed. The password provided is incorrect.",
+      });
+      return;
+    }
+
+    // Reset checkpoints to trigger a clean run
+    document.processingCheckpoint = {
+      ocrCompleted: false,
+      enrichmentCompleted: false,
+      tablesCompleted: false,
+      aiCompleted: false
+    };
+
+    // Clear OCR artifacts
+    document.extractedText = '';
+    document.ocrConfidence = undefined;
+    document.ocrAngle = undefined;
+    document.ocrOrientationConfidence = undefined;
+
+    // Clear enrichment results
+    document.entities = [];
+    document.tables = [];
+
+    // Clear AI outputs
+    document.documentName = document.originalName;
+
+    if (document.metadata) {
+      if (document.metadata instanceof Map) {
+        document.metadata.delete('summaryFields');
+        document.metadata.delete('aiSummary');
+        document.metadata.delete('aiCategory');
+        document.metadata.delete('aiTags');
+        document.metadata.delete('processingDiagnostics');
+      } else {
+        delete (document.metadata as any).summaryFields;
+        delete (document.metadata as any).aiSummary;
+        delete (document.metadata as any).aiCategory;
+        delete (document.metadata as any).aiTags;
+        delete (document.metadata as any).processingDiagnostics;
+      }
+    }
+
+    // Reset processing state
+    document.status = 'DECRYPTED';
+    document.processingStartedAt = undefined;
+    document.processingCompletedAt = undefined;
+    document.processingFailedAt = undefined;
+
+    await document.save();
+    emitDocumentStatus(document._id.toString(), 'DECRYPTED');
+
+    console.log(`[DECRYPT] Decrypted successfully. Status set to DECRYPTED for document ${id}. Awaiting manual trigger.`);
+
+    res.status(200).json({
+      success: true,
+      message: "Decryption successful. Ready for manual analysis.",
+      document,
+    });
+  } catch (error: any) {
+    console.error("[DECRYPT_MANUAL_ERROR]", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "An error occurred during decryption.",
+    });
+  }
+};
+
+/**
+ * Toggle pinned summary fields for a document
+ */
+export const togglePinField = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { fieldKey } = req.body;
+
+    if (!fieldKey) {
+      res.status(400).json({
+        success: false,
+        message: 'fieldKey is required in req.body',
+      });
+      return;
+    }
+
+    const document = await Document.findById(id);
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        message: 'Document not found',
+      });
+      return;
+    }
+
+    if (!document.pinnedFields) {
+      document.pinnedFields = [];
+    }
+
+    const index = document.pinnedFields.indexOf(fieldKey);
+    if (index > -1) {
+      // Unpin the field
+      document.pinnedFields.splice(index, 1);
+    } else {
+      // Pin the field, check limit of 3
+      if (document.pinnedFields.length >= 3) {
+        res.status(400).json({
+          success: false,
+          message: 'Maximum of 3 pinned fields allowed',
+        });
+        return;
+      }
+      document.pinnedFields.push(fieldKey);
+    }
+
+    await document.save();
+
+    res.status(200).json({
+      success: true,
+      pinnedFields: document.pinnedFields,
+    });
+  } catch (error: any) {
+    console.error('[TOGGLE_PIN_ERROR]', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to toggle pinned field',
+    });
+  }
+};
+
+/**
+ * Send a document as an email attachment using SMTP config
+ */
+export const emailDocument = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { to } = req.body;
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!to || !emailRegex.test(to)) {
+      res.status(400).json({
+        success: false,
+        error: 'A valid recipient email address ("to") is required.',
+      });
+      return;
+    }
+
+    const document = await Document.findById(id);
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        error: 'Document not found.',
+      });
+      return;
+    }
+
+    const { sendDocumentEmail } = require('../services/emailService');
+    await sendDocumentEmail(to, document);
+
+    res.status(200).json({
+      success: true,
+    });
+  } catch (error: any) {
+    console.error('[EMAIL_DOCUMENT_ERROR]', error);
+    res.status(500).json({
+      error: error.message || 'Failed to send document email.',
+    });
+  }
+};
+
+/**
+ * Get Consolidated Tables Metadata for a document
+ */
+export const getDocumentTables = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const document = await Document.findById(id);
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        error: 'Document not found.',
+      });
+      return;
+    }
+
+    const { getNormalizedTablesInfo } = require('../services/tableStorageService');
+    const info = getNormalizedTablesInfo(document);
+    res.status(200).json(info);
+  } catch (error: any) {
+    console.error('[GET_DOCUMENT_TABLES_ERROR]', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to retrieve tables metadata.',
+    });
+  }
+};
+
+/**
+ * Get parsed grid cells and sheet metadata for a worksheet
+ */
+export const getDocumentTableSheet = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id, sheet } = req.params;
+    const document = await Document.findById(id);
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        error: 'Document not found.',
+      });
+      return;
+    }
+
+    const path = require('path');
+    const fs = require('fs');
+    const XLSX = require('xlsx');
+    const { getNormalizedTablesInfo, parseExcelSheet } = require('../services/tableStorageService');
+    
+    const info = getNormalizedTablesInfo(document);
+    const sheetMeta = info.tables.find((t: any) => t.sheetName === sheet);
+
+    const uploadsDir = path.resolve(__dirname, '../../uploads');
+    let workbookAbsPath = '';
+    let finalSheetName = sheet;
+
+    if (Array.isArray(document.tables)) {
+      // Legacy document compat layer
+      const legacyTable = document.tables.find((t: any) => t.tableId === sheet);
+      if (!legacyTable) {
+        res.status(404).json({
+          success: false,
+          error: `Worksheet "${sheet}" not found in legacy tables.`,
+        });
+        return;
+      }
+      const { getAbsoluteStoragePath } = require('../utils/storagePathUtils');
+      workbookAbsPath = getAbsoluteStoragePath(legacyTable.excelPath);
+      
+      if (!fs.existsSync(workbookAbsPath)) {
+        res.status(404).json({
+          success: false,
+          error: `Excel file not found on disk: ${legacyTable.excelPath}`,
+        });
+        return;
+      }
+      
+      const sheetWorkbook = XLSX.readFile(workbookAbsPath);
+      finalSheetName = sheetWorkbook.SheetNames[0];
+    } else {
+      // New consolidated document format
+      if (!document.tables || !document.tables.workbookPath) {
+        res.status(404).json({
+          success: false,
+          error: 'Consolidated workbook path missing in database.',
+        });
+        return;
+      }
+      const cleanPath = document.tables.workbookPath.replace(/^\/uploads/, '');
+      workbookAbsPath = path.join(uploadsDir, cleanPath);
+    }
+
+    const data = parseExcelSheet(workbookAbsPath, finalSheetName, document, sheetMeta);
+    res.status(200).json({
+      success: true,
+      ...data,
+      grid_items: sheetMeta?.grid_items || [],
+      table_metadata: sheetMeta?.table_metadata || {},
+      layoutConfidence: sheetMeta?.layoutConfidence !== undefined ? sheetMeta.layoutConfidence : 1.0,
+      extractionConfidence: sheetMeta?.extractionConfidence !== undefined ? sheetMeta.extractionConfidence : 1.0,
+      extractionEngine: sheetMeta?.extractionEngine || sheetMeta?.engine || 'camelot',
+      layoutEvidence: sheetMeta?.layoutEvidence || { tableEvidence: 1.0, keyValueEvidence: 0.0, reasons: [] }
+    });
+  } catch (error: any) {
+    console.error('[GET_DOCUMENT_TABLE_SHEET_ERROR]', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to parse worksheet.',
+    });
+  }
+};
+
+/**
+ * Download Consolidated tables workbook (dynamically builds it for legacy documents)
+ */
+export const downloadDocumentTables = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const document = await Document.findById(id);
+    if (!document) {
+      res.status(404).json({
+        success: false,
+        error: 'Document not found.',
+      });
+      return;
+    }
+
+    const path = require('path');
+    const fs = require('fs');
+    const { getOrGenerateLegacyWorkbook } = require('../services/tableStorageService');
+
+    let workbookAbsPath = '';
+    const nameWithoutExt = (document.documentName || document.originalName).replace(/\.[^/.]+$/, "");
+    const downloadFilename = `${nameWithoutExt}_Tables.xlsx`;
+
+    if (Array.isArray(document.tables)) {
+      // Legacy document: consolidate loose files on the fly
+      if (document.tables.length === 0) {
+        res.status(400).json({
+          success: false,
+          error: 'Document has no tables to download.',
+        });
+        return;
+      }
+      workbookAbsPath = await getOrGenerateLegacyWorkbook(document);
+    } else {
+      // New format: send workbook directly
+      if (!document.tables || !document.tables.workbookPath) {
+        res.status(404).json({
+          success: false,
+          error: 'Workbook not found.',
+        });
+        return;
+      }
+      const uploadsDir = path.resolve(__dirname, '../../uploads');
+      const cleanPath = document.tables.workbookPath.replace(/^\/uploads/, '');
+      workbookAbsPath = path.join(uploadsDir, cleanPath);
+    }
+
+    if (!fs.existsSync(workbookAbsPath)) {
+      res.status(404).json({
+        success: false,
+        error: 'Workbook file not found on disk.',
+      });
+      return;
+    }
+
+    res.download(workbookAbsPath, downloadFilename);
+  } catch (error: any) {
+    console.error('[DOWNLOAD_DOCUMENT_TABLES_ERROR]', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to download tables workbook.',
     });
   }
 };

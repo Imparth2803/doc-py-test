@@ -11,13 +11,6 @@ pydantic==2.6.3
 paddlepaddle==2.6.2
 paddleocr==2.7.3
 
-# Document Processing & ML Fallback
-# Docling 2.x for high-fidelity table extraction
-docling==2.15.1
-docling-core==2.10.0
-# Specific torch CPU build for efficiency
-torch==2.3.1+cpu --index-url https://download.pytorch.org/whl/cpu
-
 # Image & PDF Utilities
 opencv-python-headless==4.10.0.84
 PyMuPDF==1.24.4

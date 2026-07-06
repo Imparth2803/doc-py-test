@@ -48,7 +48,6 @@ def main():
         check_import("fitz"),
         check_import("pdfplumber"),
         check_import("paddleocr", "PPStructure"),
-        check_import("docling.document_converter", "DocumentConverter"),
         check_import("camelot"),
         check_import("pandas"),
         check_import("fastapi"),

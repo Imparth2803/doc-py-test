@@ -1,5 +1,6 @@
 import { AIAnalysisResult } from './ai/types';
 import { VaultClassification } from './classification/vaultClassifier';
+import { getPlainMetadata } from '../utils/metadataUtils';
 
 export interface OCRResult {
   extractedText: string;
@@ -25,6 +26,7 @@ export const normalizeProcessingStrategy = (strategy: string): string => {
   }
 };
 
+
 /**
  * Maps the results of OCR, AI Extraction, and Vault Classification 
  * into a single update object for the Document model.
@@ -33,8 +35,12 @@ export const mapDocumentUpdate = (
   ocrResult: OCRResult, 
   aiResult: AIAnalysisResult, 
   vaultInfo: VaultClassification,
-  originalName: string
+  originalName: string,
+  existingMetadata: Record<string, any> = {}
 ) => {
+  const plainExisting = getPlainMetadata(existingMetadata);
+  const plainAiMetadata = getPlainMetadata(aiResult?.metadata);
+
   return {
     extractedText: ocrResult.extractedText,
     ocrConfidence: ocrResult.confidence,
@@ -43,20 +49,23 @@ export const mapDocumentUpdate = (
     // AI Standardized fields
     docType: aiResult.category,
     tags: aiResult.tags,
-    entities: aiResult.entities,
     
     // Naming
     documentName: aiResult.suggestedFilename || originalName,
     
     // Metadata (Flat structure for frontend compatibility)
     metadata: {
+      ...plainExisting,
       aiSummary: aiResult.summary,
       aiCategory: aiResult.category,
       aiTags: aiResult.tags,
       aiEntities: aiResult.entities,
       suggestedFilename: aiResult.suggestedFilename,
-      summaryFields: aiResult.summaryFields || {},
-      ...aiResult.metadata // Spread dynamic technical metadata (dates/amounts)
+      ...plainAiMetadata, // Spread dynamic technical metadata (dates/amounts)
+      processingDiagnostics: {
+        ...(plainExisting.processingDiagnostics || {}),
+        ...(plainAiMetadata.processingDiagnostics || {})
+      }
     },
     
     // Organization
@@ -67,3 +76,4 @@ export const mapDocumentUpdate = (
     status: 'COMPLETED' as const
   };
 };
+

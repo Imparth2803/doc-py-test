@@ -17,6 +17,12 @@ export interface IUser
   name: string;
   picture?: string;
   role?: string;
+  googleAccessToken?: string;
+  googleRefreshToken?: string;
+  usage?: {
+    totalAiUnits: number;
+    totalProcessingRuns: number;
+  };
 }
 
 const UserSchema = new Schema(
@@ -47,6 +53,24 @@ const UserSchema = new Schema(
     role: {
       type: String,
       default: "user",
+    },
+
+    googleAccessToken: {
+      type: String,
+    },
+
+    googleRefreshToken: {
+      type: String,
+    },
+    usage: {
+      totalAiUnits: {
+        type: Number,
+        default: 0,
+      },
+      totalProcessingRuns: {
+        type: Number,
+        default: 0,
+      },
     },
   },
   {

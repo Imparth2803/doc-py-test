@@ -9,7 +9,13 @@ import {
   getJobStatus,
   processDocument,
   updateDocument,
-  rotateDocument
+  rotateDocument,
+  decryptManualDocument,
+  togglePinField,
+  emailDocument,
+  getDocumentTables,
+  getDocumentTableSheet,
+  downloadDocumentTables
 } from '../controllers/documentController';
 
 console.log('\nDOCUMENT ROUTES LOADED');
@@ -33,6 +39,11 @@ router.post(
 );
 
 router.post('/:id/process', processDocument);
+router.post('/:id/decrypt', decryptManualDocument);
+router.post('/:id/email', emailDocument);
+
+// Toggle pin field
+router.patch('/:id/toggle-pin', togglePinField);
 
 // Rotate document
 router.post('/:id/rotate', rotateDocument);
@@ -48,5 +59,10 @@ router.get('/:id', getDocumentById);
 
 // Get processing job
 router.get('/job/:id', getJobStatus);
+
+// Table extraction routes
+router.get('/:id/tables/download', downloadDocumentTables);
+router.get('/:id/tables', getDocumentTables);
+router.get('/:id/tables/:sheet', getDocumentTableSheet);
 
 export default router;

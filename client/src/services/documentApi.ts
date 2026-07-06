@@ -87,22 +87,45 @@ export const updateDocument = async (
 };
 
 export const processDocument = async (
-  documentId: string
+  documentId: string,
+  language: string = 'en'
 ): Promise<ApiDocument> => {
   const response = await fetch(
     `${API_BASE}/${documentId}/process`,
     {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language }),
     }
   );
 
   if (!response.ok) {
-    throw new Error('Processing failed');
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || 'Processing failed to start');
   }
 
-  const data: DocumentResponse =
-    await response.json();
+  const data = await response.json();
+  return data.document;
+};
 
+export const decryptDocument = async (
+  documentId: string,
+  password: string
+): Promise<ApiDocument> => {
+  const response = await fetch(`${API_BASE}/${documentId}/decrypt`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ password }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Decryption failed');
+  }
+
+  const data = await response.json();
   return data.document;
 };
 
@@ -138,4 +161,46 @@ export const deleteDocument = async (
   if (!response.ok) {
     throw new Error('Failed to delete document');
   }
+};
+
+export const emailDocument = async (
+  documentId: string,
+  to: string
+): Promise<{ success: boolean }> => {
+  const response = await fetch(`${API_BASE}/${documentId}/email`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ to }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to send document email');
+  }
+
+  return response.json();
+};
+
+export const getDocumentTables = async (documentId: string): Promise<any> => {
+  const response = await fetch(`${API_BASE}/${documentId}/tables`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to fetch document tables');
+  }
+  return response.json();
+};
+
+export const getDocumentTableSheet = async (documentId: string, sheetName: string): Promise<any> => {
+  const response = await fetch(`${API_BASE}/${documentId}/tables/${encodeURIComponent(sheetName)}`);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to fetch table sheet data');
+  }
+  return response.json();
+};
+
+export const getDownloadTablesUrl = (documentId: string): string => {
+  return `${API_BASE}/${documentId}/tables/download`;
 };

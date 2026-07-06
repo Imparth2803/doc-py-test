@@ -6,17 +6,24 @@ import React, {
 import { useApp } from '../context/AppContext';
 import { Document } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, Plus, FolderOpen, FileText, Calendar, Search, LogOut, Tag as TagIcon, X, User, Check, SlidersHorizontal, Trash2, Share2, LayoutGrid, List, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, FolderOpen, FileText, Calendar, Search, LogOut, Tag as TagIcon, X, User, Check, SlidersHorizontal, Trash2, Share2, LayoutGrid, List, Sparkles, Lock, Unlock } from 'lucide-react';
 import { cn, isValidMetadata } from '../lib/utils';
 import { TopNav } from './TopNav';
 import { ShareModal } from './ShareModal';
+import { DocumentCard } from './DocumentCard';
+import { decryptDocument, processDocument } from '../services/documentApi';
+import { mapApiDocumentToDocument } from '../utils/documentMapper';
+import { RECOMMENDED_DOCS } from '../constants';
 
 export function Archive() {
   const {
-  documents,
-  goToUpload,
-  logout,
-  fetchLiveDocuments,
+    documents,
+    goToUpload,
+    logout,
+    fetchLiveDocuments,
+    targetArchiveDocId,
+    targetArchiveDocType,
+    clearArchiveContext
   } = useApp();
   
   // Facet State
@@ -30,26 +37,139 @@ export function Archive() {
   const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
 
+  const [modalPassword, setModalPassword] = useState('');
+  const [modalIsDecrypting, setModalIsDecrypting] = useState(false);
+  const [modalIsProcessing, setModalIsProcessing] = useState(false);
+  const [modalErrorMsg, setModalErrorMsg] = useState<string | null>(null);
+
+  const handleModalDecrypt = async (docId: string) => {
+    if (!modalPassword.trim()) return;
+    setModalIsDecrypting(true);
+    setModalErrorMsg(null);
+    try {
+      const updatedDoc = await decryptDocument(docId, modalPassword);
+      setModalPassword('');
+      const mapped = mapApiDocumentToDocument(updatedDoc);
+      setViewingDoc(mapped);
+      await fetchLiveDocuments();
+    } catch (err: any) {
+      console.error(err);
+      setModalErrorMsg(err.message || 'Decryption failed');
+    } finally {
+      setModalIsDecrypting(false);
+    }
+  };
+
+  const handleModalAnalyze = async (docId: string) => {
+    setModalIsProcessing(true);
+    setModalErrorMsg(null);
+    try {
+      const updatedDoc = await processDocument(docId);
+      const mapped = mapApiDocumentToDocument(updatedDoc);
+      setViewingDoc(mapped);
+      await fetchLiveDocuments();
+    } catch (err: any) {
+      console.error(err);
+      setModalErrorMsg(err.message || 'Analysis failed');
+    } finally {
+      setModalIsProcessing(false);
+    }
+  };
+
   // Share Modal State
   const [shareDoc, setShareDoc] = useState<Document | null>(null);
 
   // Mobile sidebar toggle - NOW USED FOR DESKTOP TOO (hidden by default)
   const [showFilters, setShowFilters] = useState(false);
   useEffect(() => {
-  fetchLiveDocuments();
+    fetchLiveDocuments();
   }, []);
+
+  // Helper for recommendation matching
+  const matchesRecommendation = (doc: Document, tagsMatch: string[]) => {
+    const nameText = (doc.name || '').toLowerCase();
+    const origText = (doc.originalName || '').toLowerCase();
+    const docTypeText = (doc.docType || '').toLowerCase();
+    const vaultCatText = (doc.vaultCategory || '').toLowerCase();
+    const tagsText = (doc.tags || []).map(t => t.toLowerCase()).join(' ');
+    const combinedText = `${nameText} ${origText} ${docTypeText} ${vaultCatText} ${tagsText}`;
+
+    return tagsMatch.some(tm => combinedText.includes(tm.toLowerCase()));
+  };
+
+  // Support contextual navigation for specific document ID (Phase 1)
+  useEffect(() => {
+    if (targetArchiveDocId) {
+      const doc = documents.find(d => d._id === targetArchiveDocId);
+      if (doc) {
+        // Expand card details
+        setExpandedDocId(targetArchiveDocId);
+        
+        // Scroll card smoothly into center viewport
+        setTimeout(() => {
+          const element = document.getElementById(`doc-card-${targetArchiveDocId}`);
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            element.classList.add('ring-2', 'ring-blue-500/50', 'bg-blue-50/30');
+            setTimeout(() => {
+              element.classList.remove('ring-2', 'ring-blue-500/50', 'bg-blue-50/30');
+            }, 2500);
+          }
+        }, 200);
+      }
+      clearArchiveContext();
+    }
+  }, [targetArchiveDocId, documents]);
+
+  // Support contextual navigation for recommended doc types (Phase 2 / Phase 5)
+  useEffect(() => {
+    if (targetArchiveDocType) {
+      const recommended = RECOMMENDED_DOCS.find(r => r.id === targetArchiveDocType);
+      if (recommended) {
+        const matches = documents.filter(doc => matchesRecommendation(doc, recommended.tagsMatch));
+        
+        // If exactly 1 matching document exists, expand and scroll to it
+        if (matches.length === 1) {
+          const targetDocId = matches[0]._id;
+          setExpandedDocId(targetDocId);
+          
+          setTimeout(() => {
+            const element = document.getElementById(`doc-card-${targetDocId}`);
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              element.classList.add('ring-2', 'ring-blue-500/50', 'bg-blue-50/30');
+              setTimeout(() => {
+                element.classList.remove('ring-2', 'ring-blue-500/50', 'bg-blue-50/30');
+              }, 2500);
+            }
+          }, 200);
+        }
+      }
+      clearArchiveContext();
+    }
+  }, [targetArchiveDocType, documents]);
 
   // Omnisearch logic
   const searchedDocs = useMemo(() => {
-    if (!searchQuery.trim()) return documents;
+    let sourceDocs = documents;
+
+    // Apply contextual recommendation filter if requested (Phase 2 Uploaded Shortcut)
+    if (targetArchiveDocType) {
+      const recommended = RECOMMENDED_DOCS.find(r => r.id === targetArchiveDocType);
+      if (recommended) {
+        sourceDocs = documents.filter(doc => matchesRecommendation(doc, recommended.tagsMatch));
+      }
+    }
+
+    if (!searchQuery.trim()) return sourceDocs;
 
     const tokens = searchQuery.toLowerCase().split(' ').filter(t => t.trim().length > 0);
-    return documents.filter(doc => {
+    return sourceDocs.filter(doc => {
       const docText = `${doc.name} ${doc.folder} ${(doc.entities || []).join(' ')} ${doc.docType || ''} ${(doc.tags || []).join(' ')} ${doc.extractedText || ''}`.toLowerCase();
       // Returns true if EVERY search token is found
       return tokens.every(token => docText.includes(token));
     });
-  }, [documents, searchQuery]);
+  }, [documents, searchQuery, targetArchiveDocType]);
 
   // Faceted filtering
   const filteredDocs = useMemo(() => {
@@ -306,8 +426,8 @@ export function Archive() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5 items-start">
                   <AnimatePresence mode="sync">
                     {filteredDocs.map(doc => (
-                      <motion.div key={doc._id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2 }}>
-                        <DocCard
+                      <motion.div key={doc._id} id={`doc-card-${doc._id}`} className="transition-all duration-300 rounded-[28px]" layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.2 }}>
+                        <DocumentCard
                           doc={doc}
                           isExpanded={!!doc._id && expandedDocId === doc._id}
                           onToggleExpand={() => {
@@ -364,29 +484,91 @@ export function Archive() {
                <button onClick={() => setShareDoc(viewingDoc)} className="absolute top-4 right-16 z-10 w-10 h-10 bg-white/50 backdrop-blur-md rounded-full flex items-center justify-center text-gray-800 hover:bg-white shadow-sm border border-gray-100 transition-colors">
                   <Share2 size={18} />
                </button>
-
                <div className="w-full md:w-1/2 bg-gray-50 flex items-center justify-center border-b md:border-b-0 md:border-r border-gray-100 relative min-h-[300px] md:min-h-[500px]">
-                 {viewingDoc.previewUrl && (!viewingDoc.mimeType || viewingDoc.mimeType.startsWith('image/')) ? (
-                   <img src={viewingDoc.previewUrl} className="w-full h-full object-contain max-h-[70vh] p-4" alt="" />
-                 ) : viewingDoc.previewUrl && viewingDoc.mimeType === 'application/pdf' ? (
-                   <object data={viewingDoc.previewUrl} type="application/pdf" className="w-full h-full min-h-[500px] border-none">
-                     <div className="flex flex-col items-center justify-center h-full text-gray-400 p-8">
-                        <FileText size={48} className="mb-4" />
-                        <p className="text-sm">Cannot preview PDF in this browser. <a href={viewingDoc.previewUrl} download className="text-blue-500 underline">Download</a> to view.</p>
+                  {viewingDoc.status === 'NEEDS_PASSWORD' || viewingDoc.status === 'UNLOCK_FAILED' ? (
+                    <div className="flex flex-col items-center justify-center text-red-500 p-8 text-center">
+                       <Lock size={48} className="mb-4 text-red-400" />
+                       <p className="font-bold text-gray-700 text-sm">Document Encrypted</p>
+                       <p className="text-xs text-gray-400 max-w-[220px] mt-1">Please enter password on the right to decrypt and view document.</p>
+                    </div>
+                  ) : viewingDoc.previewUrl && (!viewingDoc.mimeType || viewingDoc.mimeType.startsWith('image/')) ? (
+                    <img src={viewingDoc.previewUrl} className="w-full h-full object-contain max-h-[70vh] p-4" alt="" />
+                  ) : viewingDoc.previewUrl && viewingDoc.mimeType === 'application/pdf' ? (
+                    <object data={viewingDoc.previewUrl} type="application/pdf" className="w-full h-full min-h-[500px] border-none">
+                      <div className="flex flex-col items-center justify-center h-full text-gray-400 p-8">
+                         <FileText size={48} className="mb-4" />
+                         <p className="text-sm">Cannot preview PDF in this browser. <a href={viewingDoc.previewUrl} download className="text-blue-500 underline">Download</a> to view.</p>
+                      </div>
+                    </object>
+                  ) : (
+                    <div className="flex flex-col items-center text-gray-400">
+                       <FileText size={48} className="mb-4" />
+                       <p className="font-medium text-gray-600 truncate max-w-[200px]">{viewingDoc.name}</p>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh] break-words">
+                   <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8 break-words">{viewingDoc.name}</h2>
+                   
+                   {/* Decryption/Analysis Actions inside Viewer Modal */}
+                   {(viewingDoc.status === 'NEEDS_PASSWORD' || viewingDoc.status === 'UNLOCK_FAILED') && (
+                     <div className="mb-6 p-4 bg-red-50/80 rounded-[16px] border border-red-100 flex flex-col gap-2">
+                       <div className="flex items-center gap-2 text-red-700 font-bold text-xs uppercase tracking-wider">
+                         <Lock size={12} className="text-red-500" />
+                         <span>Password Protected PDF</span>
+                       </div>
+                       <p className="text-[11px] text-red-500 leading-normal">This document is encrypted. Decryption is required before preview or analysis.</p>
+                       {modalErrorMsg && <p className="text-[11px] font-medium text-red-700">{modalErrorMsg}</p>}
+                       <div className="flex gap-2">
+                         <input 
+                           type="password"
+                           placeholder="Password..."
+                           value={modalPassword}
+                           onChange={e => setModalPassword(e.target.value)}
+                           disabled={modalIsDecrypting}
+                           className="flex-1 px-3 py-1.5 border border-red-200 rounded-xl text-xs bg-white focus:outline-none focus:ring-1 focus:ring-red-400"
+                         />
+                         <button 
+                           onClick={() => handleModalDecrypt(viewingDoc._id)}
+                           disabled={modalIsDecrypting || !modalPassword.trim()}
+                           className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 active:scale-95 flex items-center gap-1"
+                         >
+                           {modalIsDecrypting ? 'Unlocking...' : 'Decrypt'}
+                         </button>
+                       </div>
                      </div>
-                   </object>
-                 ) : (
-                   <div className="flex flex-col items-center text-gray-400">
-                      <FileText size={48} className="mb-4" />
-                      <p className="font-medium text-gray-600 truncate max-w-[200px]">{viewingDoc.name}</p>
-                   </div>
-                 )}
-               </div>
-               
-               <div className="w-full md:w-1/2 p-8 md:p-10 overflow-y-auto max-h-[50vh] md:max-h-[80vh] break-words">
-                  <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6 pr-8 break-words">{viewingDoc.name}</h2>
-                  
-                  <div className="space-y-6">
+                   )}
+
+                   {viewingDoc.status === 'DECRYPTED' && (
+                     <div className="mb-6 p-4 bg-blue-50/70 rounded-[16px] border border-blue-100/50 flex flex-col gap-2">
+                       <div className="flex items-center gap-2 text-blue-700 font-bold text-xs uppercase tracking-wider">
+                         <Unlock size={12} className="text-blue-500" />
+                         <span>Decrypted & Ready</span>
+                       </div>
+                       <p className="text-[11px] text-blue-500 leading-normal">Manual decryption succeeded. Verify preview on left, then start AI analysis.</p>
+                       {modalErrorMsg && <p className="text-[11px] font-medium text-red-700">{modalErrorMsg}</p>}
+                       <button 
+                         onClick={() => handleModalAnalyze(viewingDoc._id)}
+                         disabled={modalIsProcessing}
+                         className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all disabled:opacity-50 active:scale-95 shadow-md shadow-blue-500/10"
+                       >
+                         {modalIsProcessing ? 'Analyzing...' : 'Analyze Document'}
+                       </button>
+                     </div>
+                   )}
+
+                   {viewingDoc.status === 'PROCESSING' && (
+                     <div className="mb-6 p-4 bg-gray-50 rounded-[16px] border border-gray-100 flex items-center justify-between">
+                       <div className="flex items-center gap-2 text-gray-500 font-bold text-xs uppercase tracking-wider animate-pulse">
+                         <div className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></div>
+                         <span>Analyzing...</span>
+                       </div>
+                       <div className="w-4 h-4 border-2 border-gray-200 border-t-blue-500 rounded-full animate-spin"></div>
+                     </div>
+                   )}
+
+                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <span className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Entity / Subject</span>
@@ -413,7 +595,7 @@ export function Archive() {
                           {Object.entries(viewingDoc.metadata).map(([key, val]) => (isValidMetadata(val) && key !== 'summaryFields') ? (
                              <div key={key}>
                                 <span className="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                                <span className="font-medium text-gray-900">{val}</span>
+                                <span className="font-medium text-gray-900">{typeof val === 'object' ? JSON.stringify(val) : val}</span>
                              </div>
                           ) : null)}
                         </div>
@@ -512,219 +694,3 @@ const ActiveChip: React.FC<{ label: string, icon?: React.ReactNode, onRemove: ()
      <button onClick={onRemove} className="opacity-40 hover:opacity-100 hover:text-red-500 hover:bg-red-50 p-0.5 rounded-md transition-all ml-1"><X size={14}/></button>
   </motion.span>
 );
-
-// Reusable Document Card Component
-const DocCard: React.FC<{ 
-  doc: Document, 
-  isExpanded?: boolean,
-  onToggleExpand?: () => void,
-  onTagClick: (tag: string) => void,
-  onEntityClick: (entity: string) => void,
-  onFolderClick: (folder: string) => void,
-  onView: () => void,
-  onShare: (doc: Document) => void
-}> = ({ doc, isExpanded, onToggleExpand, onTagClick, onEntityClick, onFolderClick, onView, onShare }) => {
-
-  const [expandedEntities, setExpandedEntities] = useState(false);
-  const summary = doc.metadata?.aiSummary;
-  
-  return (
-    <div 
-      className={cn(
-        "bg-white border rounded-[20px] shadow-[0_2px_8px_rgb(0,0,0,0.02)] hover:shadow-[0_8px_24px_rgb(0,0,0,0.06)] transition-all group flex flex-col p-5 cursor-pointer relative overflow-hidden",
-        isExpanded ? "border-blue-500 ring-2 ring-blue-500/10 z-10" : "border-gray-100 hover:border-gray-300"
-      )} 
-      onClick={onToggleExpand}
-    >
-      
-      {/* Share Button Overlay */}
-      <button 
-        onClick={(e) => { e.stopPropagation(); onShare(doc); }}
-        className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-white/80 backdrop-blur-sm border border-gray-100 shadow-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-gray-50 text-gray-500 hover:text-gray-800"
-      >
-        <Share2 size={14} />
-      </button>
-
-      {/* Top Section */}
-      <div className="flex items-start gap-4 mb-2">
-        {doc.previewUrl && (!doc.mimeType || doc.mimeType.startsWith('image/')) ? (
-           <div 
-             className="w-14 h-14 bg-gray-50 rounded-[14px] overflow-hidden shrink-0 border border-gray-100 shadow-sm cursor-zoom-in"
-             onClick={(e) => { e.stopPropagation(); onView(); }}
-           >
-             <img src={doc.previewUrl} className="w-full h-full object-cover" alt="" />
-           </div>
-        ) : doc.previewUrl && doc.mimeType === 'application/pdf' ? (
-           <div 
-             className="w-14 h-14 bg-gray-50 rounded-[14px] overflow-hidden shrink-0 border border-gray-100 shadow-sm relative pointer-events-none cursor-zoom-in"
-             onClick={(e) => { e.stopPropagation(); onView(); }}
-           >
-             <object data={doc.previewUrl + '#toolbar=0&navpanes=0&scrollbar=0'} type="application/pdf" className="w-[400px] h-[400px] absolute top-[-100px] left-[-100px] origin-[30%_30%] scale-[0.15]">
-               <div className="w-full h-full flex items-center justify-center text-red-500">
-                 <FileText size={24} />
-               </div>
-             </object>
-             <span className="absolute bottom-1 right-1 text-[8px] font-black uppercase text-red-600 bg-white/90 border border-red-100 rounded px-1">PDF</span>
-           </div>
-        ) : (
-           <div 
-             className="w-14 h-14 rounded-[14px] flex items-center justify-center text-gray-500 shrink-0 bg-gray-50 border border-gray-100 shadow-sm cursor-zoom-in"
-             onClick={(e) => { e.stopPropagation(); onView(); }}
-           >
-              <FileText size={24} />
-           </div>
-        )}
-        <div className="flex-1 min-w-0 pt-0.5">
-           <h4 className={cn("font-bold text-gray-900 text-[15px] truncate transition-colors mb-2", isExpanded ? "text-blue-600" : "group-hover:text-blue-600")}>{doc.name}</h4>
-           
-           <div className="flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
-             <div className="flex items-center gap-2 flex-wrap">
-               {doc.entities && doc.entities.slice(0, 2).map((ent, index) => (
-                 <button 
-                    key={`${ent}-${index}`} 
-                    onClick={() => onEntityClick(ent)} 
-                    title={ent}
-                    className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 font-semibold hover:bg-purple-100 hover:scale-105 transition-all max-w-[100px] sm:max-w-[130px]"
-                 >
-                    <User size={10} strokeWidth={2.5} className="shrink-0"/> 
-                    <span className="truncate">{ent}</span>
-                 </button>
-               ))}
-               {!isExpanded && !expandedEntities && doc.entities && doc.entities.length > 2 && (
-                 <button 
-                    onClick={(e) => { e.stopPropagation(); setExpandedEntities(true); }}
-                    className="text-[10px] font-bold text-gray-400 px-1 hover:text-gray-600 transition-colors"
-                 >
-                   +{doc.entities.length - 2} more
-                 </button>
-               )}
-             </div>
-
-             <AnimatePresence>
-               {expandedEntities && (
-                 <motion.div 
-                   initial={{ height: 0, opacity: 0 }}
-                   animate={{ height: 'auto', opacity: 1 }}
-                   exit={{ height: 0, opacity: 0 }}
-                   className="overflow-hidden"
-                 >
-                   <div className="flex items-center gap-2 flex-wrap pt-1">
-                      {doc.entities?.slice(2).map((ent, index) => (
-                        <button 
-                           key={`${ent}-${index + 2}`} 
-                           onClick={() => onEntityClick(ent)} 
-                           title={ent}
-                           className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 font-semibold hover:bg-purple-100 hover:scale-105 transition-all max-w-[100px] sm:max-w-[130px]"
-                        >
-                           <User size={10} strokeWidth={2.5} className="shrink-0"/> 
-                           <span className="truncate">{ent}</span>
-                        </button>
-                      ))}
-                      <button 
-                         onClick={(e) => { e.stopPropagation(); setExpandedEntities(false); }}
-                         className="text-[10px] font-bold text-gray-400 px-1 hover:text-gray-600 transition-colors"
-                      >
-                         Show less
-                      </button>
-                   </div>
-                 </motion.div>
-               )}
-             </AnimatePresence>
-
-             <div className="flex items-center justify-between">
-               <button onClick={() => onFolderClick(doc.folder)} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 hover:scale-105 transition-all">
-                  <FolderOpen size={10} strokeWidth={2.5} /> {doc.folder}
-               </button>
-               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">{doc.docType}</span>
-             </div>
-           </div>
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div 
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="overflow-hidden"
-          >
-            <div className="pt-5 space-y-6 border-t border-gray-100 mt-2" onClick={e => e.stopPropagation()}>
-              
-              {/* Summary */}
-              {summary && typeof summary === 'string' && (
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Summary</span>
-                  <p className="text-[13px] text-gray-600 leading-relaxed line-clamp-3">
-                    {summary}
-                  </p>
-                </div>
-              )}
-
-              {/* Tags */}
-              {Array.isArray(doc.tags) && doc.tags.length > 0 && (
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Tags</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {doc.tags.map((tag, idx) => typeof tag === 'string' && (
-                      <span key={`${tag}-${idx}`} className="px-2 py-1 bg-gray-50 text-gray-500 text-[10px] font-bold rounded-md border border-gray-100">
-                        #{tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Entities */}
-              {Array.isArray(doc.entities) && doc.entities.length > 0 && (
-                <div className="space-y-1.5">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Entities</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {doc.entities.map((ent, idx) => (
-                      <button 
-                        key={`${ent}-${idx}`} 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEntityClick(ent);
-                        }}
-                        className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-md bg-gray-50 text-gray-700 font-bold border border-gray-100 hover:bg-gray-200 transition-colors"
-                      >
-                        <User size={10} strokeWidth={3} className="text-gray-400" />
-                        <span>{ent}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Action Link */}
-              <div className="pt-2 flex justify-end border-t border-gray-100">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); onView(); }}
-                  className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                >
-                  Open Original <ChevronRight size={14} />
-                </button>
-              </div>
-
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {!isExpanded && (
-        <div className="mt-2 flex items-center justify-between">
-           <span className="text-[10px] text-gray-400 font-bold uppercase flex items-center gap-1">
-             <Calendar size={12} className="text-gray-300" /> {doc.date}
-           </span>
-           <div className="flex gap-1">
-              {doc.tags && doc.tags.slice(0, 2).map(t => (
-                <span key={t} className="w-1.5 h-1.5 rounded-full bg-gray-200"></span>
-              ))}
-           </div>
-        </div>
-      )}
-    </div>
-  )
-}

@@ -3,9 +3,9 @@ export interface ApiDocument {
   originalName: string;
   storagePath?: string;
   documentName?: string;
-  suggestedFilename?: string;
+  // suggestedFilename is stored in metadata.suggestedFilename and mirrored to documentName — no top-level field on the API response
   mimeType: string;
-  status: 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  status: 'UPLOADING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'PARTIAL_SUCCESS' | 'NEEDS_PASSWORD' | 'UNLOCKING' | 'UNLOCK_FAILED' | 'DECRYPTED';
 
   processingStrategy?: 'DIGITAL_DOCUMENT' | 'SCANNED_DOCUMENT' | 'TEXT_ONLY' | 'VISION_FALLBACK' | 'PENDING';
 
@@ -19,7 +19,8 @@ export interface ApiDocument {
   entities?: string[];
 
 
-  confidence?: 'HIGH' | 'LOW';
+  // ocrConfidence: numeric 0–100 from the OCR engine, persisted as Document.ocrConfidence
+  ocrConfidence?: number;
   metrics?: {
     pages?: number;
     languages?: string[];
@@ -30,4 +31,8 @@ export interface ApiDocument {
 
   createdAt?: string;
   updatedAt?: string;
+  vaultFolder?: string;
+  vaultCategory?: string;
+  pinnedFields?: string[];
+  tables?: any;
 }

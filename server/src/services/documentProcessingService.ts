@@ -14,9 +14,18 @@ import { mapGLiNEREntitiesToFlatArray } from "./entities/entityMapper";
 import { compareEntities } from "./entities/entityComparator";
 import { classifyDocumentByRules } from "./classification/ruleClassifier";
 import { compareClassifications, printClassificationBenchmark } from "./classification/classificationComparator";
+import { sanitizeOCRText } from "./ocr/ocrSanitizer";
+import { printOCRQualityBenchmark } from "./ocr/ocrComparator";
+import { analyzeDocumentLocally, LocalDocumentAnalysis } from "./analysis/localDocumentAnalyzer";
+import { printAnalysisBenchmark } from "./analysis/analysisComparator";
+import { emitDocumentStatus } from "./socket";
+import { compareLocalVsGemini } from "./analysis/localVsGeminiComparator";
+import { buildSummaryFields } from "./metadata/summaryFieldBuilder";
 import { mapDocumentUpdate } from "./documentMapper";
+import { getPlainMetadata } from "../utils/metadataUtils";
 import { logMetric, logError, measureStep } from "../utils/logger";
 import { extractTables } from "./tableExtractionService";
+import { calculateAIUnitsForDocument } from "./aiUnitCalculator";
 
 const PDF_TEXT_THRESHOLD = parseInt(process.env.PDF_TEXT_THRESHOLD || "100", 10);
 
@@ -29,12 +38,20 @@ const LARGE_FILE_SIZE_MB = parseInt(process.env.LARGE_FILE_SIZE_MB || "10", 10);
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 const LARGE_FILE_SIZE_BYTES = LARGE_FILE_SIZE_MB * 1024 * 1024;
 
+
+
 /**
  * Reusable helper to update heartbeat for both Document and ProcessingJob
  */
 const updateProcessingHeartbeat = async (document: IDocument, job?: IProcessingJob | null) => {
   const now = new Date();
   document.lastHeartbeatAt = now;
+  
+  // Validation logging
+  const metadataPlain = getPlainMetadata(document.metadata);
+  console.log("[VALIDATION Heartbeat] Metadata keys:", Object.keys(metadataPlain));
+  console.log("[VALIDATION Heartbeat] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
+  
   await document.save();
   
   if (job) {
@@ -43,18 +60,22 @@ const updateProcessingHeartbeat = async (document: IDocument, job?: IProcessingJ
   }
 };
 
-export const processDocumentWithAI = async (documentId: string) => {
+export const processDocumentWithAI = async (documentId: string, language: string = 'en') => {
   const totalPerfStart = Date.now();
   let currentStage = "INITIALIZATION";
   let geminiMode: "TEXT" | "VISION" = "VISION";
   let textLength = 0;
   let classification: "NORMAL_DOCUMENT" | "LARGE_DOCUMENT" | "OVERSIZED_DOCUMENT" = "NORMAL_DOCUMENT";
-  let extractedTables: any[] = [];
+  let extractedTables: any = null;
   
   const document = await Document.findById(documentId);
   if (!document) {
     throw new Error("Document not found");
   }
+
+  // Ensure storagePath is absolute for local processing operations
+  const { getAbsoluteStoragePath } = require('../utils/storagePathUtils');
+  document.storagePath = getAbsoluteStoragePath(document.storagePath);
 
   // Find associated processing job
   const job = await ProcessingJob.findOne({ documentId: document._id });
@@ -66,6 +87,8 @@ export const processDocumentWithAI = async (documentId: string) => {
     if (document.status !== "PROCESSING") {
       document.status = "PROCESSING";
       document.processingStartedAt = new Date();
+      await document.save();
+      emitDocumentStatus(documentId, 'PROCESSING');
     }
     
     // Initialize checkpoint if missing
@@ -73,22 +96,26 @@ export const processDocumentWithAI = async (documentId: string) => {
       document.processingCheckpoint = {
         ocrCompleted: false,
         enrichmentCompleted: false,
+        tablesCompleted: false,
         aiCompleted: false
       };
     }
+    
+    const checkpoint = document.processingCheckpoint!;
     
     await updateProcessingHeartbeat(document, job);
 
     console.log('\n====================================');
     console.log('Checkpoint Status');
     console.log('====================================');
-    console.log(`OCR: ${document.processingCheckpoint.ocrCompleted}`);
-    console.log(`Enrichment: ${document.processingCheckpoint.enrichmentCompleted}`);
-    console.log(`AI: ${document.processingCheckpoint.aiCompleted}`);
+    console.log(`OCR: ${checkpoint.ocrCompleted}`);
+    console.log(`Enrichment: ${checkpoint.enrichmentCompleted}`);
+    console.log(`Tables: ${checkpoint.tablesCompleted}`);
+    console.log(`AI: ${checkpoint.aiCompleted}`);
     console.log('====================================\n');
 
     // STEP 1 — Add EXIF Normalization
-    if (!document.processingCheckpoint.ocrCompleted && document.mimeType.startsWith("image/")) {
+    if (!checkpoint.ocrCompleted && document.mimeType.startsWith("image/")) {
       currentStage = "EXIF_NORMALIZATION";
       await updateProcessingHeartbeat(document, job); // Before EXIF
       
@@ -122,7 +149,7 @@ export const processDocumentWithAI = async (documentId: string) => {
     currentStage = "OCR_EXTRACTION";
     let ocrResult: any;
     
-    if (document.processingCheckpoint.ocrCompleted) {
+    if (checkpoint.ocrCompleted) {
       console.log('[CHECKPOINT] OCR already completed. Skipping.');
       ocrResult = {
         extractedText: document.extractedText || "",
@@ -136,15 +163,41 @@ export const processDocumentWithAI = async (documentId: string) => {
       ocrResult = await measureStep(documentId, "OCR_EXTRACTION", async () => {
         return await extractTextAndEvaluate(
           document.storagePath,
-          document.mimeType
+          document.mimeType,
+          language
         );
       });
       
+      // Phase 4.3 - OCR Sanitization Layer
+      const { cleanedText, diagnostics: ocrDiagnostics } = sanitizeOCRText(ocrResult.extractedText);
+      ocrResult.extractedText = cleanedText; // Update downstream consumers to use cleaned text
+      printOCRQualityBenchmark(ocrDiagnostics);
+
       // CHECKPOINT #1 - OCR Persistence
-      document.extractedText = ocrResult.extractedText;
+      document.extractedText = cleanedText; // Save ONLY the cleaned text
       document.ocrConfidence = ocrResult.confidence;
       document.processingStrategy = ocrResult.strategy;
-      document.processingCheckpoint.ocrCompleted = true;
+      document.ocrAngle = ocrResult.angle ?? 0;
+      document.ocrOrientationConfidence = ocrResult.orientationConfidence ?? 0;
+      
+      // Store OCR diagnostics immediately
+      const plainOcrExisting = getPlainMetadata(document.metadata);
+      document.metadata = {
+        ...plainOcrExisting,
+        processingDiagnostics: {
+          ...(plainOcrExisting.processingDiagnostics || {}),
+          ocrQuality: ocrDiagnostics,
+          pdfExtraction: ocrResult.pdfExtraction
+        }
+      };
+
+      checkpoint.ocrCompleted = true;
+
+      // Validation logging
+      const metadataPlain = getPlainMetadata(document.metadata);
+      console.log("[VALIDATION Checkpoint #1] Metadata keys:", Object.keys(metadataPlain));
+      console.log("[VALIDATION Checkpoint #1] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
+
       await document.save();
     }
     
@@ -195,9 +248,9 @@ export const processDocumentWithAI = async (documentId: string) => {
     let glinerResult: any;
     let ruleClassification: any;
 
-    if (document.processingCheckpoint.enrichmentCompleted) {
+    if (checkpoint.enrichmentCompleted) {
       console.log('[CHECKPOINT] Enrichment already completed. Skipping.');
-      regexMetadata = document.metadata || {};
+      regexMetadata = getPlainMetadata(document.metadata);
       flatGlinerEntities = document.entities || [];
       // We don't have ruleClassification preserved easily, but it's diagnostics only.
     } else {
@@ -208,113 +261,172 @@ export const processDocumentWithAI = async (documentId: string) => {
       // STEP 2.6 — GLiNER Entity Extraction (Shadow Mode)
       currentStage = "GLINER_EXTRACTION";
       glinerResult = await extractEntitiesWithGLiNER(ocrResult.extractedText || "");
-      flatGlinerEntities = mapGLiNEREntitiesToFlatArray(glinerResult.entities);
+      flatGlinerEntities = glinerResult.stakeholders || [];
 
       // STEP 2.65 - Rule-Based Document Classification (Shadow Mode)
       currentStage = "RULE_CLASSIFICATION";
       ruleClassification = classifyDocumentByRules(ocrResult.extractedText || "", regexMetadata);
 
       // CHECKPOINT #2 - Enrichment Persistence
-      document.metadata = regexMetadata;
+      const existingMetadata = getPlainMetadata(document.metadata);
+      const plainRegex = getPlainMetadata(regexMetadata);
+      document.metadata = {
+        ...existingMetadata,
+        ...plainRegex,
+        processingDiagnostics: {
+          ...(existingMetadata.processingDiagnostics || {}),
+          glinerSanitization: glinerResult.sanitization
+        }
+      };
       document.entities = flatGlinerEntities;
-      document.processingCheckpoint.enrichmentCompleted = true;
+      checkpoint.enrichmentCompleted = true;
+
+      // Validation logging
+      const metadataPlain = getPlainMetadata(document.metadata);
+      console.log("[VALIDATION Checkpoint #2] Metadata keys:", Object.keys(metadataPlain));
+      console.log("[VALIDATION Checkpoint #2] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
+
       await document.save();
     }
 
-    // STEP 2.7 — Table Extraction
-    // Note: Table extraction writes files to disk. To be fully retry-safe, 
-    // it should either be skipped if tables already exist, or clear the folder first.
-    // For now, we only run it if enrichment wasn't skipped (or if we track it).
-    // Let's rely on the AI completion status, since table extraction happens right before AI.
-    // Actually, to prevent duplicates, we can check if document.tables has elements.
-    const canExtractTables = 
-      ocrResult.strategy === "DIGITAL_DOCUMENT" || 
+    // STEP 2.7 — Table Extraction (Retry-Safe)
+    const canExtractTables =
+      ocrResult.strategy === "DIGITAL_DOCUMENT" ||
       ocrResult.strategy === "SCANNED_DOCUMENT";
 
-    if (canExtractTables && (!document.tables || document.tables.length === 0)) {
+    if (canExtractTables && !checkpoint.tablesCompleted) {
       currentStage = "TABLE_EXTRACTION";
       extractedTables = await extractTables(documentId, document.storagePath, ocrResult.strategy);
-      
-      if (extractedTables.length > 0) {
+
+      if (extractedTables && extractedTables.success && extractedTables.totalTables > 0) {
         document.tables = extractedTables;
-        try {
-          await document.save();
-        } catch (saveErr) {
-          console.error("[TABLE_METADATA_SAVE_ERROR]", saveErr);
-        }
+      } else {
+        document.tables = extractedTables; // E.g., empty result
       }
-    } else if (document.tables && document.tables.length > 0) {
-      console.log('[CHECKPOINT] Tables already extracted. Skipping.');
-      extractedTables = document.tables;
+
+      // Persist tables and update checkpoint
+      checkpoint.tablesCompleted = true;
+      try {
+        // Validation logging
+        const metadataPlain = getPlainMetadata(document.metadata);
+        console.log("[VALIDATION Checkpoint #2.7] Metadata keys:", Object.keys(metadataPlain));
+        console.log("[VALIDATION Checkpoint #2.7] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
+
+        await document.save();
+        console.log(`[TABLES] Extraction complete. ${extractedTables?.totalTables || 0} tables found. Checkpoint saved.`);
+      } catch (saveErr) {
+        console.error("[TABLE_CHECKPOINT_SAVE_ERROR]", saveErr);
+      }
+    } else if (checkpoint.tablesCompleted) {
+      console.log('[TABLES] Checkpoint found. Reusing existing tables.');
+      extractedTables = document.tables || null;
     }
 
-    // STEP 3 — Gemini Analysis (Routing Decision)
-    currentStage = "GEMINI_ANALYSIS";
-    await updateProcessingHeartbeat(document, job); // Before Gemini
+    // Phase 5C.3: Deterministic SummaryFields Builder
+    currentStage = "SUMMARY_FIELDS_GENERATION";
+    const summaryFieldsResult = buildSummaryFields(
+      ruleClassification?.category || "Unknown",
+      regexMetadata,
+      { persons: flatGlinerEntities, organizations: flatGlinerEntities }, // Approximate since mapper flattened it earlier
+      extractedTables
+    );
+
+    // Save to metadata immediately without waiting for AI
+    const plainSummaryExisting = getPlainMetadata(document.metadata);
+    document.metadata = {
+      ...plainSummaryExisting,
+      summaryFields: summaryFieldsResult.fields,
+      processingDiagnostics: {
+        ...(plainSummaryExisting.processingDiagnostics || {}),
+        summaryFieldsProvenance: summaryFieldsResult.diagnostics
+      }
+    };
+
+    // STEP 3 — AI Analysis (Routing via Orchestrator)
+    currentStage = "AI_ANALYSIS";
+    await updateProcessingHeartbeat(document, job); // Before AI
     
     let aiResult: any;
     let aiSuccess = false;
     let aiErrorMsg = "";
+    
+    let geminiShadowResult: any = null;
+    let localLatency = 0;
+    let geminiLatency = 0;
 
-    if (document.processingCheckpoint.aiCompleted) {
+    if (checkpoint.aiCompleted) {
       console.log('[CHECKPOINT] AI already completed. Skipping.');
       aiSuccess = true;
-      // We don't reconstruct aiResult fully because it's already in the DB.
-      // But we need it for mapping. Actually, if it's aiCompleted, we can just jump to COMPLETED.
-      // Wait, if AI completed, it means the document should already be mapped and finished.
-      // If we crashed between Checkpoint #3 and final status update, we need to finalize.
     } else {
-      const isDigitalPdf = document.mimeType === "application/pdf" && ocrResult.strategy === "DIGITAL_DOCUMENT";
-      const hasEnoughText = textLength > PDF_TEXT_THRESHOLD;
-
-      try {
-        if (isDigitalPdf && hasEnoughText) {
-          geminiMode = "TEXT";
-          console.log(`[ROUTING] TEXT_MODE (length=${textLength})`);
-          
-          aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_TEXT", async () => {
-            return await aiOrchestrator.analyzeText(
-              ocrResult.extractedText,
-              document.originalName
-            );
-          });
-        } else {
-          geminiMode = "VISION";
-          const reason = !isDigitalPdf ? "NOT_A_PDF" : "LOW_TEXT_CONFIDENCE";
-          console.log(`[ROUTING] VISION_MODE (reason=${reason}, length=${textLength})`);
-
-          const fileBuffer = fs.readFileSync(document.storagePath);
-          const base64Data = fileBuffer.toString("base64");
-          
-          aiResult = await measureStep(documentId, "GEMINI_ANALYSIS_VISION", async () => {
-            return await aiOrchestrator.analyzeDocument(
-              base64Data,
-              document.mimeType,
-              document.originalName
-            );
-          });
-        }
-        aiSuccess = true;
-      } catch (err: any) {
-        console.error("[GEMINI_FAILED_SWALLOWED]", err.message);
-        aiErrorMsg = err.message;
-        aiResult = {
-          summary: "AI analysis unavailable (Service error)",
-          category: "Other",
-          tags: ["OCR_ONLY"],
-          entities: [],
-          suggestedFilename: document.originalName.split('.')[0],
-          rotation: 0,
-          summaryFields: {}
-        };
-      }
+        try {
+         const aiPerfStart = Date.now();
+         geminiMode = "TEXT";
+         console.log(`[ROUTING] Running local Ollama analyzer directly (length=${textLength})`);
+         
+         aiResult = await measureStep(documentId, "PRIMARY_AI_TEXT", async () => {
+           const localAnalysis = await analyzeDocumentLocally(ocrResult.extractedText);
+           return {
+             summary: localAnalysis.summary || "Document processed locally. Summary unavailable.",
+             category: localAnalysis.category || "Unknown",
+             tags: localAnalysis.tags || [],
+             entities: [],
+             suggestedFilename: localAnalysis.suggestedFilename || document.originalName.split('.')[0],
+             rotation: 0,
+             summaryFields: localAnalysis.summaryFields || {},
+             metadata: {
+               processingDiagnostics: {
+                 localAnalysis: localAnalysis.diagnostics
+               }
+             }
+           };
+         });
+         aiSuccess = true;
+         localLatency = Date.now() - aiPerfStart;
+ 
+       } catch (err: any) {
+         console.error("[PRIMARY_AI_FAILED_SWALLOWED] Local Ollama analysis failed:", err.message);
+         aiErrorMsg = err.message;
+         aiResult = {
+           summary: "AI analysis unavailable (Service error)",
+           category: "Other",
+           tags: ["OCR_ONLY"],
+           entities: [],
+           suggestedFilename: document.originalName.split('.')[0],
+           rotation: 0,
+           summaryFields: {}
+         };
+       }
       
       // Merge Regex Metadata with AI Metadata
       const mergedMetadata = {
-        ...regexMetadata,
-        ...(aiResult.metadata || {})
+        ...getPlainMetadata(regexMetadata),
+        ...getPlainMetadata(aiResult.metadata)
       };
       aiResult.metadata = mergedMetadata;
+
+      // Merge and deduplicate summaryFields
+      const finalSummaryFields: Record<string, string> = {};
+      const aiSummaryFields = aiResult.summaryFields || {};
+      for (const [key, val] of Object.entries(aiSummaryFields)) {
+        if (val) {
+          finalSummaryFields[key] = String(val);
+        }
+      }
+      
+      const ruleFields = summaryFieldsResult?.fields || {};
+      for (const [ruleKey, ruleVal] of Object.entries(ruleFields)) {
+        if (ruleVal) {
+          const lowerRuleKey = ruleKey.toLowerCase();
+          const existingKey = Object.keys(finalSummaryFields).find(k => k.toLowerCase() === lowerRuleKey);
+          if (existingKey) {
+            delete finalSummaryFields[existingKey];
+          }
+          finalSummaryFields[ruleKey] = ruleVal;
+        }
+      }
+
+      // Set combined fields back to metadata for mapping & database save
+      aiResult.metadata.summaryFields = finalSummaryFields;
       
       if (glinerResult && ruleClassification) {
         // Entity Comparison (Shadow Mode)
@@ -348,6 +460,21 @@ export const processDocumentWithAI = async (documentId: string) => {
         // Classification Comparison (Shadow Mode)
         const classificationComparison = compareClassifications(ruleClassification, aiResult.category || "UNKNOWN");
         printClassificationBenchmark(classificationComparison);
+
+        if (geminiShadowResult) {
+          const aiBenchmark = compareLocalVsGemini(
+            aiResult,
+            geminiShadowResult,
+            localLatency,
+            geminiLatency,
+            ruleClassification.category || "Unknown"
+          );
+
+          aiResult.metadata.processingDiagnostics = {
+            ...aiResult.metadata.processingDiagnostics,
+            aiBenchmark
+          };
+        }
 
         aiResult.metadata.processingDiagnostics = {
           ...aiResult.metadata.processingDiagnostics,
@@ -400,20 +527,48 @@ export const processDocumentWithAI = async (documentId: string) => {
         ocrResult,
         aiResult,
         vaultInfo,
-        document.originalName
+        document.originalName,
+        getPlainMetadata(document.metadata)
       );
 
       // CHECKPOINT #3 - AI Persistence
       Object.assign(document, update);
+
+      // Save comparison diagnostics and ensure GLiNER entities remain authoritative
+      const existingDiag = getPlainMetadata(document.metadata?.processingDiagnostics || {});
+      document.metadata = {
+        ...getPlainMetadata(document.metadata || {}),
+        processingDiagnostics: {
+          ...existingDiag,
+          entityComparison: {
+            gliner: flatGlinerEntities,
+            gemini: aiResult.entities || []
+          },
+          glinerEntitiesRaw: glinerResult?.stakeholderDiagnostics?.glinerEntitiesRaw || [],
+          glinerEntitiesRanked: glinerResult?.stakeholderDiagnostics?.glinerEntitiesRanked || [],
+          entityScores: glinerResult?.stakeholderDiagnostics?.entityScores || {},
+          entityLabels: glinerResult?.stakeholderDiagnostics?.entityLabels || {}
+        }
+      };
+
+      console.log(`[ENTITY SOURCE] Using GLiNER entities GLiNER count=${flatGlinerEntities.length} Gemini count=${(aiResult.entities || []).length}`);
+
       if (!aiSuccess) {
+        const plainAIFailExisting = getPlainMetadata(document.metadata);
         document.metadata = {
-          ...document.metadata,
+          ...plainAIFailExisting,
           aiStatus: "FAILED",
           aiError: aiErrorMsg,
           ocrStatus: "SUCCESS"
         };
       }
       document.processingCheckpoint.aiCompleted = true;
+
+      // Validation logging
+      const metadataPlain = getPlainMetadata(document.metadata);
+      console.log("[VALIDATION Checkpoint #3] Metadata keys:", Object.keys(metadataPlain));
+      console.log("[VALIDATION Checkpoint #3] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
+
       await document.save();
     }
 
@@ -422,18 +577,85 @@ export const processDocumentWithAI = async (documentId: string) => {
     await updateProcessingHeartbeat(document, job); // Before Save
     
     await measureStep(documentId, "DATABASE_SAVE", async () => {
-      // Handle Partial Success
-      if (!aiSuccess && !document.processingCheckpoint?.aiCompleted) {
-        // Fallback catch, though aiCompleted handles saving the failure state
-        document.status = "PARTIAL_SUCCESS";
-      } else if (!aiSuccess && document.processingCheckpoint?.aiCompleted && document.metadata?.aiStatus === "FAILED") {
-        document.status = "PARTIAL_SUCCESS";
-      } else {
-        document.status = "COMPLETED";
-      }
+      // Calculate and store AI Units usage (Phase 2)
+      const ocrPageCount = ocrResult?.pageCount || 1;
+      const tablesExtractedCount = Array.isArray(document.tables)
+        ? document.tables.length
+        : (document.tables?.totalTables || 0);
+      const hasEntities = (document.entities && document.entities.length > 0) || (aiResult?.entities && aiResult.entities.length > 0);
+      const hasSummary = !!(document.metadata?.aiSummary || aiResult?.summary);
+      const hasSuggestedFilename = !!aiResult?.suggestedFilename;
+      const hasTags = (document.tags && document.tags.length > 0) || (aiResult?.tags && aiResult.tags.length > 0);
+      const hasClassification = !!(document.vaultCategory || aiResult?.category);
 
+      const calcResult = calculateAIUnitsForDocument({
+        pageCount: ocrPageCount,
+        tablesCount: tablesExtractedCount,
+        hasEntities,
+        hasSummary,
+        hasSuggestedFilename,
+        hasTags,
+        hasClassification
+      });
+
+      document.usage = {
+        aiUnits: calcResult.aiUnits,
+        processingRuns: (document.usage?.processingRuns || 0) + 1,
+        calculatorVersion: calcResult.calculatorVersion,
+        calculatedAt: calcResult.calculatedAt,
+        breakdown: calcResult.breakdown
+      };
+
+      // Handle Partial Success
+      const statusValue = (!aiSuccess && !document.processingCheckpoint?.aiCompleted) || 
+                          (!aiSuccess && document.processingCheckpoint?.aiCompleted && document.metadata?.aiStatus === "FAILED") 
+                          ? "PARTIAL_SUCCESS" : "COMPLETED";
+
+      document.status = statusValue;
       document.processingCompletedAt = new Date();
-      await document.save();
+      emitDocumentStatus(documentId, statusValue);
+
+      // Validation logging
+      const metadataPlain = getPlainMetadata(document.metadata);
+      console.log("[VALIDATION Final Save] Metadata keys:", Object.keys(metadataPlain));
+      console.log("[VALIDATION Final Save] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
+
+      const aiSummary = document.metadata instanceof Map ? document.metadata.get("aiSummary") : (document.metadata as any)?.aiSummary;
+      const aiCategory = document.metadata instanceof Map ? document.metadata.get("aiCategory") : (document.metadata as any)?.aiCategory;
+      const aiTags = document.metadata instanceof Map ? document.metadata.get("aiTags") : (document.metadata as any)?.aiTags;
+
+      await Document.findByIdAndUpdate(
+        documentId,
+        {
+          $set: {
+            extractedText: document.extractedText,
+            "metadata.aiSummary": aiSummary,
+            "metadata.aiCategory": aiCategory,
+            "metadata.aiTags": aiTags,
+            "metadata.aiEntities": document.entities,
+            entities: document.entities,
+            tags: document.tags,
+            status: statusValue,
+            usage: document.usage
+          }
+        },
+        { new: true }
+      );
+
+      // Increment User-Level cumulative stats (Phase 3)
+      if (document.userId) {
+        const User = require('../models/User').default;
+        await User.findByIdAndUpdate(
+          document.userId,
+          {
+            $inc: {
+              "usage.totalAiUnits": calcResult.aiUnits,
+              "usage.totalProcessingRuns": 1
+            }
+          }
+        );
+        console.log(`[USER USAGE] Incremented total usage metrics for User ${document.userId} by ${calcResult.aiUnits} units.`);
+      }
 
       if (job) {
         job.status = document.status === "COMPLETED" ? "COMPLETED" : "PARTIAL_SUCCESS";
@@ -445,7 +667,8 @@ export const processDocumentWithAI = async (documentId: string) => {
       }
     });
     
-    await updateProcessingHeartbeat(document, job); // After Save
+    const freshDoc = await Document.findById(documentId);
+    if (freshDoc) await updateProcessingHeartbeat(freshDoc, job); // After Save
 
     const totalDurationMs = Date.now() - totalPerfStart;
     
@@ -456,12 +679,16 @@ export const processDocumentWithAI = async (documentId: string) => {
       durationMs: totalDurationMs,
       metadata: {
         mimeType: document.mimeType,
-        pageCount: document.tables?.length ? Math.max(...document.tables.map(t => t.pageNumber)) : 1,
+        pageCount: Array.isArray(document.tables)
+          ? (document.tables.length ? Math.max(...document.tables.map((t: any) => t.pageNumber || 1)) : 1)
+          : (document.tables?.pagesWithTables?.length ? Math.max(...document.tables.pagesWithTables) : 1),
         geminiMode,
         textLength,
         classification,
         largeDocument: classification !== "NORMAL_DOCUMENT",
-        tablesFound: document.tables?.length || 0,
+        tablesFound: Array.isArray(document.tables)
+          ? (document.tables.length || 0)
+          : (document.tables?.totalTables || 0),
         success: true
       }
     });
@@ -483,6 +710,13 @@ export const processDocumentWithAI = async (documentId: string) => {
 
     document.status = "FAILED";
     document.processingFailedAt = new Date();
+    emitDocumentStatus(documentId, "FAILED");
+
+    // Validation logging
+    const metadataPlain = getPlainMetadata(document.metadata);
+    console.log("[VALIDATION Error Save] Metadata keys:", Object.keys(metadataPlain));
+    console.log("[VALIDATION Error Save] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
+
     await document.save();
 
     if (job) {
