@@ -133,7 +133,9 @@ export function Dashboard(props: any) {
                             </div>
                             <div className="overflow-hidden">
                               <h4 className="text-sm font-bold text-gray-900 truncate">{doc.name}</h4>
-                              <p className="text-[10px] text-gray-400 uppercase font-black tracking-tight">{doc.docType || 'Document'}</p>
+                              <p className="text-[10px] text-gray-400 uppercase font-black tracking-tight">
+                                 {doc.mimeType?.split('/')[1] || doc.name?.split('.').pop() || 'Document'}
+                              </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 opacity-80 group-hover:opacity-100">

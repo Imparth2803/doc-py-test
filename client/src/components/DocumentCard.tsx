@@ -256,7 +256,9 @@ export const DocumentCard: React.FC<{
                <button onClick={() => onFolderClick(doc.folder)} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 hover:scale-105 transition-all">
                   <FolderOpen size={10} strokeWidth={2.5} /> {doc.folder}
                </button>
-               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">{doc.docType}</span>
+               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">
+                   {doc.mimeType?.split('/')[1] || doc.name?.split('.').pop() || 'PDF'}
+               </span>
              </div>
            </div>
         </div>

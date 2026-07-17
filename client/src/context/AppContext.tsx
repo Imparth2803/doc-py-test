@@ -69,6 +69,7 @@ interface AppState {
   manualReminders: ManualReminder[];
   addManualReminder: (reminder: Omit<ManualReminder, 'id'>) => void;
   deleteManualReminder: (id: string) => void;
+  updateDocumentReminder: (docId: string, status: 'ACTIVE' | 'COMPLETED' | 'DISMISSED', completedDate?: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppState | undefined>(undefined);
@@ -151,7 +152,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 mimeType: freshApiDoc.mimeType,
                 previewUrl,
                 pinnedFields: freshApiDoc.pinnedFields || [],
-                tables: freshApiDoc.tables
+                tables: freshApiDoc.tables,
+                reminderState: freshApiDoc.reminderState
               };
 
               setDocuments(prevDocs =>
@@ -438,7 +440,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
           pinnedFields: doc.pinnedFields || [],
           
-          tables: doc.tables
+          tables: doc.tables,
+          reminderState: doc.reminderState
         };
       }
     );
@@ -506,7 +509,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           folder // migration fallback
         },
         mimeType,
-        pinnedFields: pendingDoc?.aiResult?.pinnedFields || []
+        pinnedFields: pendingDoc?.aiResult?.pinnedFields || [],
+        reminderState: pendingDoc?.aiResult?.reminderState
       };
       
       setDocuments(prev => {
@@ -536,6 +540,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Failed to save document:', error);
       alert('Failed to save changes to the vault. Please try again.');
+    }
+  };
+
+  const updateDocumentReminder = async (
+    docId: string,
+    status: 'ACTIVE' | 'COMPLETED' | 'DISMISSED',
+    completedDate?: string
+  ) => {
+    try {
+      const updates = {
+        reminderState: {
+          status,
+          completedDate,
+          updatedAt: new Date().toISOString()
+        }
+      };
+      const updatedApiDoc = await updateDocument(docId, updates);
+      
+      // Update local state immediately
+      setDocuments(prev => prev.map(d => {
+        if (d._id === docId) {
+          return {
+            ...d,
+            reminderState: updatedApiDoc.reminderState
+          };
+        }
+        return d;
+      }));
+    } catch (error) {
+      console.error('Failed to update document reminder state:', error);
     }
   };
 
@@ -575,6 +609,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       manualReminders,
       addManualReminder,
       deleteManualReminder,
+      updateDocumentReminder,
     }}>
       {children}
     </AppContext.Provider>

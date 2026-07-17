@@ -47,10 +47,6 @@ const updateProcessingHeartbeat = async (document: IDocument, job?: IProcessingJ
   const now = new Date();
   document.lastHeartbeatAt = now;
   
-  // Validation logging
-  const metadataPlain = getPlainMetadata(document.metadata);
-  console.log("[VALIDATION Heartbeat] Metadata keys:", Object.keys(metadataPlain));
-  console.log("[VALIDATION Heartbeat] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
   
   await document.save();
   
@@ -193,10 +189,6 @@ export const processDocumentWithAI = async (documentId: string, language: string
 
       checkpoint.ocrCompleted = true;
 
-      // Validation logging
-      const metadataPlain = getPlainMetadata(document.metadata);
-      console.log("[VALIDATION Checkpoint #1] Metadata keys:", Object.keys(metadataPlain));
-      console.log("[VALIDATION Checkpoint #1] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
 
       await document.save();
     }
@@ -281,12 +273,150 @@ export const processDocumentWithAI = async (documentId: string, language: string
       document.entities = flatGlinerEntities;
       checkpoint.enrichmentCompleted = true;
 
-      // Validation logging
-      const metadataPlain = getPlainMetadata(document.metadata);
-      console.log("[VALIDATION Checkpoint #2] Metadata keys:", Object.keys(metadataPlain));
-      console.log("[VALIDATION Checkpoint #2] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
 
       await document.save();
+    }
+
+    // STEP 3 — AI Analysis (Routing via Orchestrator)
+    currentStage = "AI_ANALYSIS";
+    await updateProcessingHeartbeat(document, job); // Before AI
+    
+    let aiResult: any;
+    let aiSuccess = false;
+    let aiErrorMsg = "";
+    
+    let geminiShadowResult: any = null;
+    let localLatency = 0;
+    let geminiLatency = 0;
+
+    if (checkpoint.aiCompleted) {
+      console.log('[CHECKPOINT] AI already completed. Reusing stored AI results.');
+      const plainMeta = getPlainMetadata(document.metadata);
+      aiSuccess = plainMeta.aiStatus !== "FAILED";
+      aiErrorMsg = plainMeta.aiError || "";
+      aiResult = {
+        summary: plainMeta.aiSummary || "",
+        category: document.docType || "Other",
+        tags: document.tags || [],
+        entities: document.entities || [],
+        suggestedFilename: plainMeta.suggestedFilename || document.documentName || "",
+        summaryFields: plainMeta.summaryFields || {},
+        metadata: {
+          processingDiagnostics: plainMeta.processingDiagnostics || {}
+        }
+      };
+    } else if (!ocrResult.extractedText || ocrResult.extractedText.trim().length === 0) {
+      console.log('[AI_ANALYSIS] Skipping AI analysis: Empty OCR text.');
+      aiSuccess = false;
+      aiErrorMsg = "Skip AI processing: Empty OCR text.";
+      aiResult = {
+        summary: "AI analysis skipped (Empty OCR text)",
+        category: "Other",
+        tags: ["OCR_EMPTY"],
+        entities: [],
+        suggestedFilename: document.originalName.split('.')[0],
+        rotation: 0,
+        summaryFields: {},
+        metadata: {
+          processingDiagnostics: {
+            aiDiagnostics: {
+              provider: aiOrchestrator.getPrimaryProviderName(),
+              success: false,
+              failureReason: "Skip AI processing: Empty OCR text.",
+              timestamp: new Date().toISOString()
+            }
+          }
+        }
+      };
+      
+      checkpoint.aiCompleted = true;
+      const plainExisting = getPlainMetadata(document.metadata);
+      document.metadata = {
+        ...plainExisting,
+        aiStatus: "FAILED",
+        aiError: aiErrorMsg,
+        aiSummary: aiResult.summary,
+        aiCategory: aiResult.category,
+        aiTags: aiResult.tags,
+        suggestedFilename: aiResult.suggestedFilename
+      };
+      await document.save();
+    } else {
+      const isDigitalPdf = document.mimeType === "application/pdf" && ocrResult.strategy === "DIGITAL_DOCUMENT";
+      const hasEnoughText = textLength > PDF_TEXT_THRESHOLD;
+
+      try {
+        const aiPerfStart = Date.now();
+        
+        if (isDigitalPdf && hasEnoughText) {
+          geminiMode = "TEXT";
+          console.log(`[ROUTING] TEXT_MODE via Orchestrator (length=${textLength})`);
+          
+          aiResult = await measureStep(documentId, "PRIMARY_AI_TEXT", async () => {
+            return await aiOrchestrator.analyzeText(
+              ocrResult.extractedText,
+              document.originalName,
+              {
+                language: language,
+                mimeType: document.mimeType,
+                ocrConfidence: ocrResult.confidence,
+                categoryHint: ruleClassification?.category
+              }
+            );
+          });
+        } else {
+          geminiMode = "VISION";
+          const reason = !isDigitalPdf ? "NOT_A_PDF" : "LOW_TEXT_CONFIDENCE";
+          console.log(`[ROUTING] VISION_MODE via Orchestrator (reason=${reason}, length=${textLength})`);
+
+          const fileBuffer = fs.readFileSync(document.storagePath);
+          const base64Data = fileBuffer.toString("base64");
+          
+          aiResult = await measureStep(documentId, "PRIMARY_AI_VISION", async () => {
+            return await aiOrchestrator.analyzeDocument(
+              base64Data,
+              document.mimeType,
+              document.originalName,
+              ocrResult.extractedText,
+              {
+                language: language,
+                mimeType: document.mimeType,
+                ocrConfidence: ocrResult.confidence,
+                categoryHint: ruleClassification?.category
+              }
+            );
+          });
+        }
+        aiSuccess = true;
+        localLatency = Date.now() - aiPerfStart;
+      } catch (err: any) {
+        console.error("[PRIMARY_AI_FAILED_SWALLOWED] AI Orchestrator analysis failed:", err.message);
+        aiErrorMsg = err.message;
+        aiResult = {
+          summary: "AI analysis unavailable (Service error)",
+          category: "Other",
+          tags: ["OCR_ONLY"],
+          entities: [],
+          suggestedFilename: document.originalName.split('.')[0],
+          rotation: 0,
+          summaryFields: {}
+        };
+      }
+
+      // Save AI Checkpoint right after execution
+      checkpoint.aiCompleted = true;
+      const plainExisting = getPlainMetadata(document.metadata);
+      document.metadata = {
+        ...plainExisting,
+        aiStatus: aiSuccess ? "SUCCESS" : "FAILED",
+        aiError: aiSuccess ? undefined : aiErrorMsg,
+        aiSummary: aiResult.summary,
+        aiCategory: aiResult.category,
+        aiTags: aiResult.tags,
+        suggestedFilename: aiResult.suggestedFilename
+      };
+      await document.save();
+      console.log(`[AI_ANALYSIS] Stage complete. Checkpoint saved. Success=${aiSuccess}`);
     }
 
     // STEP 2.7 — Table Extraction (Retry-Safe)
@@ -307,10 +437,6 @@ export const processDocumentWithAI = async (documentId: string, language: string
       // Persist tables and update checkpoint
       checkpoint.tablesCompleted = true;
       try {
-        // Validation logging
-        const metadataPlain = getPlainMetadata(document.metadata);
-        console.log("[VALIDATION Checkpoint #2.7] Metadata keys:", Object.keys(metadataPlain));
-        console.log("[VALIDATION Checkpoint #2.7] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
 
         await document.save();
         console.log(`[TABLES] Extraction complete. ${extractedTables?.totalTables || 0} tables found. Checkpoint saved.`);
@@ -327,7 +453,7 @@ export const processDocumentWithAI = async (documentId: string, language: string
     const summaryFieldsResult = buildSummaryFields(
       ruleClassification?.category || "Unknown",
       regexMetadata,
-      { persons: flatGlinerEntities, organizations: flatGlinerEntities }, // Approximate since mapper flattened it earlier
+      { persons: flatGlinerEntities, organizations: flatGlinerEntities },
       extractedTables
     );
 
@@ -341,61 +467,6 @@ export const processDocumentWithAI = async (documentId: string, language: string
         summaryFieldsProvenance: summaryFieldsResult.diagnostics
       }
     };
-
-    // STEP 3 — AI Analysis (Routing via Orchestrator)
-    currentStage = "AI_ANALYSIS";
-    await updateProcessingHeartbeat(document, job); // Before AI
-    
-    let aiResult: any;
-    let aiSuccess = false;
-    let aiErrorMsg = "";
-    
-    let geminiShadowResult: any = null;
-    let localLatency = 0;
-    let geminiLatency = 0;
-
-    if (checkpoint.aiCompleted) {
-      console.log('[CHECKPOINT] AI already completed. Skipping.');
-      aiSuccess = true;
-    } else {
-        try {
-         const aiPerfStart = Date.now();
-         geminiMode = "TEXT";
-         console.log(`[ROUTING] Running local Ollama analyzer directly (length=${textLength})`);
-         
-         aiResult = await measureStep(documentId, "PRIMARY_AI_TEXT", async () => {
-           const localAnalysis = await analyzeDocumentLocally(ocrResult.extractedText);
-           return {
-             summary: localAnalysis.summary || "Document processed locally. Summary unavailable.",
-             category: localAnalysis.category || "Unknown",
-             tags: localAnalysis.tags || [],
-             entities: [],
-             suggestedFilename: localAnalysis.suggestedFilename || document.originalName.split('.')[0],
-             rotation: 0,
-             summaryFields: localAnalysis.summaryFields || {},
-             metadata: {
-               processingDiagnostics: {
-                 localAnalysis: localAnalysis.diagnostics
-               }
-             }
-           };
-         });
-         aiSuccess = true;
-         localLatency = Date.now() - aiPerfStart;
- 
-       } catch (err: any) {
-         console.error("[PRIMARY_AI_FAILED_SWALLOWED] Local Ollama analysis failed:", err.message);
-         aiErrorMsg = err.message;
-         aiResult = {
-           summary: "AI analysis unavailable (Service error)",
-           category: "Other",
-           tags: ["OCR_ONLY"],
-           entities: [],
-           suggestedFilename: document.originalName.split('.')[0],
-           rotation: 0,
-           summaryFields: {}
-         };
-       }
       
       // Merge Regex Metadata with AI Metadata
       const mergedMetadata = {
@@ -522,6 +593,8 @@ export const processDocumentWithAI = async (documentId: string, language: string
 
       // STEP 5 — Classification & Mapping
       currentStage = "CLASSIFICATION_AND_MAPPING";
+      console.log(`[AI_PERSISTENCE] Preparing unified persistence for Document: ${documentId}`);
+      
       const vaultInfo = classifyDocument(aiResult.category);
       const update = mapDocumentUpdate(
         ocrResult,
@@ -531,141 +604,136 @@ export const processDocumentWithAI = async (documentId: string, language: string
         getPlainMetadata(document.metadata)
       );
 
-      // CHECKPOINT #3 - AI Persistence
-      Object.assign(document, update);
-
       // Save comparison diagnostics and ensure GLiNER entities remain authoritative
       const existingDiag = getPlainMetadata(document.metadata?.processingDiagnostics || {});
-      document.metadata = {
-        ...getPlainMetadata(document.metadata || {}),
-        processingDiagnostics: {
-          ...existingDiag,
-          entityComparison: {
-            gliner: flatGlinerEntities,
-            gemini: aiResult.entities || []
-          },
-          glinerEntitiesRaw: glinerResult?.stakeholderDiagnostics?.glinerEntitiesRaw || [],
-          glinerEntitiesRanked: glinerResult?.stakeholderDiagnostics?.glinerEntitiesRanked || [],
-          entityScores: glinerResult?.stakeholderDiagnostics?.entityScores || {},
-          entityLabels: glinerResult?.stakeholderDiagnostics?.entityLabels || {}
-        }
+      
+      // Determine validation status & diagnostics details
+      const fallbackUsed = aiResult.metadata?.processingDiagnostics?.fallbackUsed || null;
+      const primaryError = aiResult.metadata?.processingDiagnostics?.primaryError || null;
+      const selectedModel = aiResult.metadata?.processingDiagnostics?.localAnalysis?.model || "gemini-2.0-flash";
+      
+      const aiDiagnostics = {
+        provider: fallbackUsed ? `${aiOrchestrator.getPrimaryProviderName()} (failed) -> ${fallbackUsed}` : aiOrchestrator.getPrimaryProviderName(),
+        model: selectedModel,
+        latencyMs: localLatency,
+        success: aiSuccess,
+        fallbackUsed: fallbackUsed,
+        validationResult: "PASSED",
+        ...(aiSuccess ? {} : { failureReason: aiErrorMsg || "Unknown AI error" }),
+        primaryError: primaryError
       };
 
-      console.log(`[ENTITY SOURCE] Using GLiNER entities GLiNER count=${flatGlinerEntities.length} Gemini count=${(aiResult.entities || []).length}`);
-
-      if (!aiSuccess) {
-        const plainAIFailExisting = getPlainMetadata(document.metadata);
-        document.metadata = {
-          ...plainAIFailExisting,
-          aiStatus: "FAILED",
-          aiError: aiErrorMsg,
-          ocrStatus: "SUCCESS"
-        };
-      }
-      document.processingCheckpoint.aiCompleted = true;
-
-      // Validation logging
-      const metadataPlain = getPlainMetadata(document.metadata);
-      console.log("[VALIDATION Checkpoint #3] Metadata keys:", Object.keys(metadataPlain));
-      console.log("[VALIDATION Checkpoint #3] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
-
-      await document.save();
-    }
-
-    // STEP 6 — Final Status Update
-    currentStage = "PERSISTENCE";
-    await updateProcessingHeartbeat(document, job); // Before Save
-    
-    await measureStep(documentId, "DATABASE_SAVE", async () => {
-      // Calculate and store AI Units usage (Phase 2)
-      const ocrPageCount = ocrResult?.pageCount || 1;
-      const tablesExtractedCount = Array.isArray(document.tables)
-        ? document.tables.length
-        : (document.tables?.totalTables || 0);
-      const hasEntities = (document.entities && document.entities.length > 0) || (aiResult?.entities && aiResult.entities.length > 0);
-      const hasSummary = !!(document.metadata?.aiSummary || aiResult?.summary);
-      const hasSuggestedFilename = !!aiResult?.suggestedFilename;
-      const hasTags = (document.tags && document.tags.length > 0) || (aiResult?.tags && aiResult.tags.length > 0);
-      const hasClassification = !!(document.vaultCategory || aiResult?.category);
-
-      const calcResult = calculateAIUnitsForDocument({
-        pageCount: ocrPageCount,
-        tablesCount: tablesExtractedCount,
-        hasEntities,
-        hasSummary,
-        hasSuggestedFilename,
-        hasTags,
-        hasClassification
-      });
-
-      document.usage = {
-        aiUnits: calcResult.aiUnits,
-        processingRuns: (document.usage?.processingRuns || 0) + 1,
-        calculatorVersion: calcResult.calculatorVersion,
-        calculatedAt: calcResult.calculatedAt,
-        breakdown: calcResult.breakdown
-      };
-
-      // Handle Partial Success
-      const statusValue = (!aiSuccess && !document.processingCheckpoint?.aiCompleted) || 
-                          (!aiSuccess && document.processingCheckpoint?.aiCompleted && document.metadata?.aiStatus === "FAILED") 
-                          ? "PARTIAL_SUCCESS" : "COMPLETED";
-
-      document.status = statusValue;
-      document.processingCompletedAt = new Date();
-      emitDocumentStatus(documentId, statusValue);
-
-      // Validation logging
-      const metadataPlain = getPlainMetadata(document.metadata);
-      console.log("[VALIDATION Final Save] Metadata keys:", Object.keys(metadataPlain));
-      console.log("[VALIDATION Final Save] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
-
-      const aiSummary = document.metadata instanceof Map ? document.metadata.get("aiSummary") : (document.metadata as any)?.aiSummary;
-      const aiCategory = document.metadata instanceof Map ? document.metadata.get("aiCategory") : (document.metadata as any)?.aiCategory;
-      const aiTags = document.metadata instanceof Map ? document.metadata.get("aiTags") : (document.metadata as any)?.aiTags;
-
-      await Document.findByIdAndUpdate(
-        documentId,
-        {
-          $set: {
-            extractedText: document.extractedText,
-            "metadata.aiSummary": aiSummary,
-            "metadata.aiCategory": aiCategory,
-            "metadata.aiTags": aiTags,
-            "metadata.aiEntities": document.entities,
-            entities: document.entities,
-            tags: document.tags,
-            status: statusValue,
-            usage: document.usage
-          }
+      const finalDiagnostics = {
+        ...existingDiag,
+        aiDiagnostics,
+        entityComparison: {
+          gliner: flatGlinerEntities,
+          gemini: aiResult.entities || []
         },
-        { new: true }
-      );
+        glinerEntitiesRaw: glinerResult?.stakeholderDiagnostics?.glinerEntitiesRaw || [],
+        glinerEntitiesRanked: glinerResult?.stakeholderDiagnostics?.glinerEntitiesRanked || [],
+        entityScores: glinerResult?.stakeholderDiagnostics?.entityScores || {},
+        entityLabels: glinerResult?.stakeholderDiagnostics?.entityLabels || {}
+      };
 
-      // Increment User-Level cumulative stats (Phase 3)
-      if (document.userId) {
-        const User = require('../models/User').default;
-        await User.findByIdAndUpdate(
-          document.userId,
-          {
-            $inc: {
-              "usage.totalAiUnits": calcResult.aiUnits,
-              "usage.totalProcessingRuns": 1
+      const finalMetadata = {
+        ...update.metadata,
+        processingDiagnostics: finalDiagnostics,
+        aiStatus: aiSuccess ? "SUCCESS" : "FAILED",
+        aiError: aiSuccess ? undefined : aiErrorMsg,
+        ocrStatus: "SUCCESS"
+      };
+
+      // Set checkpoint to completed
+      checkpoint.aiCompleted = true;
+
+      // STEP 6 — Final Status Update & Persistence
+      currentStage = "PERSISTENCE";
+      
+      await measureStep(documentId, "DATABASE_SAVE", async () => {
+        // Calculate and store AI Units usage
+        const ocrPageCount = ocrResult?.pageCount || 1;
+        const tablesExtractedCount = Array.isArray(document.tables)
+          ? document.tables.length
+          : (document.tables?.totalTables || 0);
+        const hasEntities = (document.entities && document.entities.length > 0) || (aiResult?.entities && aiResult.entities.length > 0);
+        const hasSummary = !!(finalMetadata.aiSummary || aiResult?.summary);
+        const hasSuggestedFilename = !!(finalMetadata.suggestedFilename || aiResult?.suggestedFilename);
+        const hasTags = (document.tags && document.tags.length > 0) || (aiResult?.tags && aiResult.tags.length > 0);
+        const hasClassification = !!(update.vaultCategory || aiResult?.category);
+
+        const calcResult = calculateAIUnitsForDocument({
+          pageCount: ocrPageCount,
+          tablesCount: tablesExtractedCount,
+          hasEntities,
+          hasSummary,
+          hasSuggestedFilename,
+          hasTags,
+          hasClassification
+        });
+
+        const usage = {
+          aiUnits: calcResult.aiUnits,
+          processingRuns: (document.usage?.processingRuns || 0) + 1,
+          calculatorVersion: calcResult.calculatorVersion,
+          calculatedAt: calcResult.calculatedAt,
+          breakdown: calcResult.breakdown
+        };
+
+        const statusValue = (!aiSuccess && !checkpoint.aiCompleted) || 
+                            (!aiSuccess && checkpoint.aiCompleted && finalMetadata.aiStatus === "FAILED") 
+                            ? "PARTIAL_SUCCESS" : "COMPLETED";
+
+        // Increment User-Level cumulative stats if userId exists
+        if (document.userId) {
+          const User = require('../models/User').default;
+          await User.findByIdAndUpdate(
+            document.userId,
+            {
+              $inc: {
+                "usage.totalAiUnits": calcResult.aiUnits,
+                "usage.totalProcessingRuns": 1
+              }
             }
-          }
-        );
-        console.log(`[USER USAGE] Incremented total usage metrics for User ${document.userId} by ${calcResult.aiUnits} units.`);
-      }
-
-      if (job) {
-        job.status = document.status === "COMPLETED" ? "COMPLETED" : "PARTIAL_SUCCESS";
-        if (document.status === "PARTIAL_SUCCESS") {
-          job.errorMessage = `AI Analysis failed or was skipped.`;
+          );
+          console.log(`[USER USAGE] Incremented total usage metrics for User ${document.userId} by ${calcResult.aiUnits} units.`);
         }
-        job.completedAt = new Date();
-        await job.save();
-      }
-    });
+
+        // Perform ONE unified, authoritative update database save
+        await Document.findByIdAndUpdate(
+          documentId,
+          {
+            $set: {
+              extractedText: update.extractedText,
+              ocrConfidence: update.ocrConfidence,
+              processingStrategy: update.processingStrategy,
+              docType: update.docType,
+              tags: update.tags,
+              documentName: update.documentName,
+              vaultCategory: update.vaultCategory,
+              vaultFolder: update.vaultFolder,
+              metadata: finalMetadata,
+              entities: flatGlinerEntities, // Authoritative entities
+              status: statusValue,
+              processingCheckpoint: checkpoint,
+              processingCompletedAt: new Date(),
+              usage: usage
+            }
+          },
+          { new: true, runValidators: true }
+        );
+        
+        emitDocumentStatus(documentId, statusValue);
+
+        if (job) {
+          job.status = statusValue;
+          if (statusValue === "PARTIAL_SUCCESS") {
+            job.errorMessage = `AI Analysis failed or was skipped. Error: ${aiErrorMsg || "Service unavailable"}`;
+          }
+          job.completedAt = new Date();
+          await job.save();
+        }
+      });
     
     const freshDoc = await Document.findById(documentId);
     if (freshDoc) await updateProcessingHeartbeat(freshDoc, job); // After Save
@@ -712,10 +780,6 @@ export const processDocumentWithAI = async (documentId: string, language: string
     document.processingFailedAt = new Date();
     emitDocumentStatus(documentId, "FAILED");
 
-    // Validation logging
-    const metadataPlain = getPlainMetadata(document.metadata);
-    console.log("[VALIDATION Error Save] Metadata keys:", Object.keys(metadataPlain));
-    console.log("[VALIDATION Error Save] Leaked $ keys:", Object.keys(metadataPlain).filter(key => key.startsWith("$")));
 
     await document.save();
 

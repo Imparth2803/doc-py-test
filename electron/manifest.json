@@ -1,0 +1,44 @@
+{
+  "appName": "Smart Document Vault",
+  "appVersion": "1.0.0",
+  "buildTimestamp": "2026-07-17T08:37:26.421Z",
+  "versions": {
+    "electron": "31.0.0",
+    "node": "22.20.0",
+    "python": "3.10.11",
+    "mongodb": "6.0.5"
+  },
+  "bundledServices": [
+    {
+      "name": "OCR Service",
+      "port": 8001,
+      "entryPoint": "src.services.ocr.ocr_server:app"
+    },
+    {
+      "name": "GLiNER Service",
+      "port": 8002,
+      "entryPoint": "src.services.gliner.gliner_server:app"
+    },
+    {
+      "name": "Table Extraction Service",
+      "port": 8003,
+      "entryPoint": "src.services.ocr.table_server:app"
+    }
+  ],
+  "bundledModels": [
+    "urchade/gliner_small-v2.1",
+    "PaddleOCR/PP-OCRv4"
+  ],
+  "directorySizesBytes": {
+    "mongodbBinary": 77310464,
+    "pythonRuntime": 16779670,
+    "frontendDist": 779570,
+    "backendDist": 305856,
+    "pythonServices": 335989
+  },
+  "executableHashesSha256": {
+    "mongodExe": "52323d2981aba74f9294c54d86469e796a96062c0fe6de74fce2ed1cb938e513",
+    "pythonExe": "3cce33d75d6fdae4e004d0bdf149320b3147482a9caf370079dcb9c191a1b260"
+  },
+  "totalPackageSizeBytes": 95511549
+}

@@ -1,0 +1,19 @@
+{
+  "name": "smart-document-vault-electron",
+  "version": "1.0.0",
+  "description": "Electron desktop shell wrapper for Smart Document Vault",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:validate": "node buildPipeline.js",
+    "build": "npm run build:validate && electron-builder"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.15.3"
+  }
+}

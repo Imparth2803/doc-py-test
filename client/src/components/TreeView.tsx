@@ -399,7 +399,9 @@ export function TreeView() {
                                                                        )}
                                                                        <span className="text-sm font-medium text-gray-700 group-hover:text-blue-700">{doc.name}</span>
                                                                      </div>
-                                                                     <span className="text-[10px] uppercase font-bold text-gray-400">{doc.docType}</span>
+                                                                     <span className="text-[10px] uppercase font-bold text-gray-400">
+                                                                        {doc.mimeType?.split('/')[1] || doc.name?.split('.').pop() || 'PDF'}
+                                                                     </span>
                                                                   </div>
                                                                 ))}
                                                              </motion.div>
@@ -503,7 +505,9 @@ export function TreeView() {
                                                             )}
                                                             <span className="text-sm font-medium text-gray-700 group-hover:text-blue-700">{doc.name}</span>
                                                           </div>
-                                                          <span className="text-[10px] uppercase font-bold text-gray-400">{doc.docType}</span>
+                                                          <span className="text-[10px] uppercase font-bold text-gray-400">
+                                                             {doc.mimeType?.split('/')[1] || doc.name?.split('.').pop() || 'PDF'}
+                                                          </span>
                                                        </div>
                                                      ))}
                                                   </motion.div>

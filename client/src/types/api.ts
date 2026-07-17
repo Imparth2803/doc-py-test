@@ -35,4 +35,9 @@ export interface ApiDocument {
   vaultCategory?: string;
   pinnedFields?: string[];
   tables?: any;
+  reminderState?: {
+    status: 'ACTIVE' | 'COMPLETED' | 'DISMISSED';
+    completedDate?: string;
+    updatedAt?: string;
+  };
 }

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Bell, Calendar, ChevronRight, AlertCircle, Clock, CheckCircle2 } from 'lucide-react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { Bell, Calendar, ChevronRight, AlertCircle, Clock, CheckCircle2, RotateCcw, Check, EyeOff } from 'lucide-react';
 import { Document } from '../../types';
 import { useApp, PendingDocument } from '../../context/AppContext';
 import { parseNormalizedDate } from '../../utils/dateParser';
@@ -29,7 +29,24 @@ interface ReminderItem {
 }
 
 export function SmartRemindersWidget({ documents }: SmartRemindersWidgetProps) {
-  const { setPendingDocument } = useApp();
+  const { setPendingDocument, updateDocumentReminder } = useApp();
+
+  const [lastCompletedReminder, setLastCompletedReminder] = useState<{
+    docId: string;
+    title: string;
+    status: 'COMPLETED' | 'DISMISSED';
+    completedDate: string;
+  } | null>(null);
+
+  // Clear Undo banner after timeout
+  useEffect(() => {
+    if (lastCompletedReminder) {
+      const timer = setTimeout(() => {
+        setLastCompletedReminder(null);
+      }, 6000); // 6 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [lastCompletedReminder]);
 
   const reminders = useMemo(() => {
     const list: ReminderItem[] = [];
@@ -68,6 +85,15 @@ export function SmartRemindersWidget({ documents }: SmartRemindersWidgetProps) {
 
       if (foundDate) {
         const targetDate = new Date(foundDate.getFullYear(), foundDate.getMonth(), foundDate.getDate());
+        const targetDateStr = targetDate.toISOString().split('T')[0];
+
+        // Skip generating if it is already completed/dismissed for this targetDateStr
+        if (doc.reminderState && doc.reminderState.status !== 'ACTIVE') {
+          if (doc.reminderState.completedDate === targetDateStr) {
+            return; // Skip this reminder
+          }
+        }
+
         const diffTime = targetDate.getTime() - today.getTime();
         const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
@@ -185,6 +211,44 @@ export function SmartRemindersWidget({ documents }: SmartRemindersWidgetProps) {
     setPendingDocument(pending);
   };
 
+  const handleComplete = async (item: ReminderItem) => {
+    const docId = item.doc._id;
+    const targetDate = new Date(item.date.getFullYear(), item.date.getMonth(), item.date.getDate());
+    const targetDateStr = targetDate.toISOString().split('T')[0];
+
+    setLastCompletedReminder({
+      docId,
+      title: item.title,
+      status: 'COMPLETED',
+      completedDate: targetDateStr
+    });
+
+    await updateDocumentReminder(docId, 'COMPLETED', targetDateStr);
+  };
+
+  const handleDismiss = async (item: ReminderItem) => {
+    const docId = item.doc._id;
+    const targetDate = new Date(item.date.getFullYear(), item.date.getMonth(), item.date.getDate());
+    const targetDateStr = targetDate.toISOString().split('T')[0];
+
+    setLastCompletedReminder({
+      docId,
+      title: item.title,
+      status: 'DISMISSED',
+      completedDate: targetDateStr
+    });
+
+    await updateDocumentReminder(docId, 'DISMISSED', targetDateStr);
+  };
+
+  const handleUndo = async () => {
+    if (!lastCompletedReminder) return;
+    const { docId } = lastCompletedReminder;
+
+    await updateDocumentReminder(docId, 'ACTIVE', undefined);
+    setLastCompletedReminder(null);
+  };
+
   const getStatusBadgeStyles = (status: string) => {
     switch (status) {
       case 'overdue':
@@ -207,6 +271,25 @@ export function SmartRemindersWidget({ documents }: SmartRemindersWidgetProps) {
         icon={<Bell className="text-blue-500 w-5 h-5 animate-pulse" />}
       />
       <WidgetBody className="mt-2">
+        {/* Undo Notification Banner */}
+        {lastCompletedReminder && (
+          <div className="mb-3 p-3 bg-blue-50/80 border border-blue-200 rounded-2xl flex items-center justify-between text-xs text-blue-700 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-green-600 stroke-[3px]" />
+              <span>
+                "{lastCompletedReminder.title}" marked as {lastCompletedReminder.status === 'COMPLETED' ? 'completed' : 'dismissed'}.
+              </span>
+            </div>
+            <button
+              onClick={handleUndo}
+              className="flex items-center gap-1 font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider text-[10px] hover:underline cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Undo
+            </button>
+          </div>
+        )}
+
         {reminders.length > 0 ? (
           <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
             {reminders.map((item, idx) => (
@@ -247,6 +330,31 @@ export function SmartRemindersWidget({ documents }: SmartRemindersWidgetProps) {
                   <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border uppercase tracking-wider ${getStatusBadgeStyles(item.status)}`}>
                     {item.remainingText}
                   </span>
+
+                  {/* Actions Container */}
+                  <div className="flex items-center gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleComplete(item);
+                      }}
+                      className="p-1.5 bg-white hover:bg-green-50 border border-gray-200 hover:border-green-300 rounded-xl text-gray-500 hover:text-green-600 transition-all shadow-xs flex items-center justify-center cursor-pointer"
+                      title="Mark Completed"
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[2.5px]" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDismiss(item);
+                      }}
+                      className="p-1.5 bg-white hover:bg-gray-100 border border-gray-200 hover:border-gray-400 rounded-xl text-gray-400 hover:text-gray-600 transition-all shadow-xs flex items-center justify-center cursor-pointer"
+                      title="Dismiss Reminder"
+                    >
+                      <EyeOff className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
                   <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
                 </div>
               </div>

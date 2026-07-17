@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { AIAnalysisResult } from './types'; 
 import { AIQuotaExceededError } from './errors';
 import { IAIProvider } from './aiProvider';
+import { cleanAndValidateFilename } from '../../utils/filenameUtils';
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY!,
@@ -84,14 +85,41 @@ Tax Document
 Business Registration
 Other
 
-Generate a meaningful filename.
+Generate a suggested filename in the "suggestedFilename" field.
 
-Rules:
-- Maximum 60 characters
-- No file extension
-- Human readable
-- Include document type when relevant
-- Include person or organization name when available
+Follow these strict rules to ensure the filename is human-readable, consistent, concise, and meaningful (as if a person manually organized their document library):
+
+1. REQUIRED FILENAME FORMAT STRUCTURE:
+   <Entity Name> <Organisation Name> <Date | Month | Year>
+   - "Entity Name" = The primary person or organization the document belongs to (the primary document owner). Never invent or hallucinate names.
+   - "Organisation Name" = The actual issuing authority (e.g., "TJSB Bank", "HDFC Bank", "Passport Office", "Apollo Hospital", "University of Hertfordshire"). Avoid generic terms like "Bank", "Company", "Government" if a proper name is available.
+   - "Date / Month / Year" = Optional. Only include when it meaningfully distinguishes the document (e.g. monthly bank statements, invoices, salary slips, tax returns, bills, insurance statements). Do NOT include dates for Passports, Aadhaar Cards, PAN Cards, Driving Licenses, Birth/Marriage Certificates, or Degree Certificates.
+
+2. GENERATION PRIORITY:
+   1. Primary Entity Name
+   2. Organisation Name
+   3. Document Type (only when needed for clarity)
+   4. Date / Month / Year (only when meaningful)
+
+3. NEVER USE UPLOADED FILENAMES OR TECHNICAL ARTIFACTS:
+   - The uploaded filename must NEVER influence the generated filename. Completely ignore values like "E_STATEMENT_...", "IMG_...", "SCAN...", "Document.pdf", "WhatsApp Image...".
+   - The generated filename must NEVER contain: random numbers, internal/customer/reference/transaction IDs, UUIDs, OCR garbage, upload timestamps, scanner names, duplicate indicators like "(1)" or "(2)", long numeric date ranges like "20260501_20260531", hashes, or technical prefixes like "IMG", "SCAN", "DOC", "FILE", "E_STATEMENT".
+
+4. FORMATTING & LENGTH:
+   - Use natural Title Case.
+   - Do NOT use underscores, excessive punctuation, or technical formatting.
+   - Length: 3 to 7 meaningful words. Maximum approximately 80 characters.
+   - If you cannot confidently identify the Entity Name, Organisation Name, or Date, omit the uncertain information rather than hallucinating. A shorter but accurate filename is always preferred.
+
+Examples:
+- TJSB Bank Statement (May 2026) -> Parth Tawde TJSB Bank Statement May 2026
+- Passport -> Parth Tawde Passport
+- Aadhaar Card -> Parth Tawde Aadhaar Card
+- PAN Card -> Parth Tawde PAN Card
+- Degree Certificate -> Parth Tawde University of Hertfordshire Degree Certificate
+- Medical Report -> John Smith Apollo Hospital Medical Report
+- GST Return -> ABC Industries GST Return FY 2024-2025
+- Invoice -> ABC Industries Tata Motors Invoice 15 March 2026
 
 Generate 3-10 tags.
 Rules:
@@ -184,6 +212,13 @@ const cleanAndParseGeminiResponse = (text: string): AIAnalysisResult => {
 
   const result = JSON.parse(cleanedText);
 
+  // Validate and Clean Filename before returning
+  result.suggestedFilename = cleanAndValidateFilename(
+    result.suggestedFilename || "",
+    undefined,
+    result.category
+  );
+
   // Convert summaryFields array back to record map for consistency
   const summaryFieldMap = Object.fromEntries(
     (result.summaryFields || []).map(
@@ -196,7 +231,7 @@ const cleanAndParseGeminiResponse = (text: string): AIAnalysisResult => {
 };
 
 export class GeminiProvider implements IAIProvider {
-  async analyzeText(text: string, fileName: string): Promise<AIAnalysisResult> {
+  async analyzeText(text: string, fileName: string, options?: any): Promise<AIAnalysisResult> {
     console.log("=== GEMINI TEXT REQUEST ===");
     console.log("File:", fileName);
     console.log("Text Length:", text.length);
@@ -237,7 +272,7 @@ ${text.slice(0, 30000)}
     }
   }
 
-  async analyzeDocument(base64Data: string, mimeType: string, fileName: string): Promise<AIAnalysisResult> {
+  async analyzeDocument(base64Data: string, mimeType: string, fileName: string, extractedText?: string, options?: any): Promise<AIAnalysisResult> {
     console.log("=== GEMINI VISION REQUEST ===");
     console.log("File:", fileName);
     console.log("Mime:", mimeType);

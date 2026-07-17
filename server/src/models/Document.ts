@@ -46,6 +46,11 @@ export interface IDocument extends MongooseDocument {
     tablesCompleted: boolean;
     aiCompleted: boolean;
   };
+  reminderState?: {
+    status: 'ACTIVE' | 'COMPLETED' | 'DISMISSED';
+    completedDate?: string;
+    updatedAt?: Date;
+  };
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -94,6 +99,11 @@ const DocumentSchema: Schema = new Schema({
     enrichmentCompleted: { type: Boolean, default: false },
     tablesCompleted: { type: Boolean, default: false },
     aiCompleted: { type: Boolean, default: false },
+  },
+  reminderState: {
+    status: { type: String, enum: ['ACTIVE', 'COMPLETED', 'DISMISSED'], default: 'ACTIVE' },
+    completedDate: { type: String },
+    updatedAt: { type: Date }
   },
 }, { timestamps: true });
 

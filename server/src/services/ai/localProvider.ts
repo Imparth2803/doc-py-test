@@ -1,10 +1,20 @@
 import { IAIProvider } from './aiProvider';
 import { AIAnalysisResult } from './types';
 import { analyzeDocumentLocally } from '../analysis/localDocumentAnalyzer';
+import { cleanAndValidateFilename } from '../../utils/filenameUtils';
 
 export class LocalProvider implements IAIProvider {
-  async analyzeText(text: string, fileName: string): Promise<AIAnalysisResult> {
-    const analysis = await analyzeDocumentLocally(text);
+  async analyzeText(text: string, fileName: string, options?: any): Promise<AIAnalysisResult> {
+    const analysis = await analyzeDocumentLocally(text, options?.categoryHint, undefined, {
+      fileName,
+      language: options?.language,
+      mimeType: options?.mimeType,
+      ocrConfidence: options?.ocrConfidence
+    });
+    
+    if (!analysis.diagnostics || !analysis.diagnostics.success) {
+      throw new Error("Local Ollama analysis failed: " + ((analysis.diagnostics as any).error || "Ollama service is unreachable or returned invalid diagnostics."));
+    }
     
     // Phase 5: Output Validation
     let validSummary = analysis.summary;
@@ -19,10 +29,7 @@ export class LocalProvider implements IAIProvider {
         .filter(t => t.length > 0 && !badTags.includes(t))
     )).slice(0, 10); // Max 10 tags
 
-    let validFilename = analysis.suggestedFilename || fileName;
-    validFilename = validFilename.replace(/[\/\\:*?"<>|]/g, '').slice(0, 80);
-    // Remove extension if AI generated one
-    validFilename = validFilename.replace(/\.(pdf|jpg|jpeg|png)$/i, '').trim();
+    const validFilename = cleanAndValidateFilename(analysis.suggestedFilename || "", fileName, analysis.category);
 
     return {
       summary: validSummary,
@@ -39,7 +46,7 @@ export class LocalProvider implements IAIProvider {
     };
   }
 
-  async analyzeDocument(base64Data: string, mimeType: string, fileName: string): Promise<AIAnalysisResult> {
+  async analyzeDocument(base64Data: string, mimeType: string, fileName: string, extractedText?: string, options?: any): Promise<AIAnalysisResult> {
     throw new Error('LocalProvider.analyzeDocument not implemented yet. (Consider falling back to analyzeText with OCR data)');
   }
 }

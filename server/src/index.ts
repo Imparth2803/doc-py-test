@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import http from 'http';
+import fs from 'fs';
 import { initializeSocket } from './services/socket';
 
 import connectDB from './config/db';
@@ -81,6 +82,22 @@ console.log(
 );
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
+
+// Dynamically serve compiled React frontend assets if they exist (for simplified host-client LAN deployment)
+const clientDist = path.join(__dirname, '../../client/dist');
+if (fs.existsSync(clientDist)) {
+  console.log(`[STARTUP] React frontend build located at: ${clientDist}. Enabling native static asset delivery.`);
+  app.use(express.static(clientDist));
+  // Catch-all route to support React single page application routing
+  app.get('*', (req, res, next) => {
+    // Only handle GET requests that do not target API endpoints
+    if (req.method === 'GET' && !req.path.startsWith('/api/')) {
+      res.sendFile(path.join(clientDist, 'index.html'));
+    } else {
+      next();
+    }
+  });
+}
 
 const PORT = process.env.PORT || 8000;
 

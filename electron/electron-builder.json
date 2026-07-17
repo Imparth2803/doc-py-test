@@ -1,0 +1,81 @@
+{
+  "appId": "com.smartdocumentvault.app",
+  "productName": "Smart Document Vault",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "**/*",
+    "!bin/**/*",
+    "!npm-cache/**/*",
+    "!build.log",
+    "!build.log.*",
+    "!electron.log.*"
+  ],
+  "extraResources": [
+    {
+      "from": "bin",
+      "to": "bin",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "python",
+      "to": "python",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "models",
+      "to": "models",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "../server/dist",
+      "to": "server/dist",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "../server/src/services",
+      "to": "server/src/services",
+      "filter": [
+        "**/*.py",
+        "**/*.txt"
+      ]
+    },
+    {
+      "from": "../server/node_modules",
+      "to": "server/node_modules",
+      "filter": [
+        "**/*",
+        "!**/@types/**/*",
+        "!**/*.ts"
+      ]
+    },
+    {
+      "from": "../client/dist",
+      "to": "client/dist",
+      "filter": ["**/*"]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ],
+    "executableName": "SmartDocumentVault"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Smart Document Vault",
+    "uninstallDisplayName": "Smart Document Vault Uninstaller",
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish": true
+  },
+  "mac": {
+    "target": "dmg"
+  }
+}

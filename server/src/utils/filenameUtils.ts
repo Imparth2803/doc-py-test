@@ -54,3 +54,63 @@ export function buildDownloadFilename(
   
   return displayTitle;
 }
+
+export function cleanAndValidateFilename(
+  filename: string,
+  originalName?: string,
+  category?: string
+): string {
+  if (!filename) return category || 'Document';
+
+  // 1. Remove file extension (case-insensitive)
+  let name = filename.replace(/\.[^/.]+$/, "");
+
+  // 2. Remove duplicate indicators like (1), (2), [1], etc.
+  name = name.replace(/\(\d+\)/g, "").replace(/\[\d+\]/g, "");
+
+  // 3. Replace underscores, hyphens (except year ranges), and other punctuation with spaces
+  name = name.replace(/_/g, " ");
+
+  // 4. Remove technical prefixes/suffixes (case-insensitive, e.g., IMG, SCAN, DOC, FILE, E_STATEMENT)
+  const technicalPrefixes = [
+    /^(IMG|SCAN|DOC|FILE|E_STATEMENT|ESTATEMENT|SAVINGS|E-STATEMENT|STATEMENT)[_ -]*/gi,
+    /[_ -]+(IMG|SCAN|DOC|FILE|E_STATEMENT|ESTATEMENT|SAVINGS|E-STATEMENT|STATEMENT)$/gi
+  ];
+  for (const prefixRegex of technicalPrefixes) {
+    name = name.replace(prefixRegex, "");
+  }
+
+  // 5. Remove meaningless numbers:
+  // - Remove digits that are 5 or more characters long (e.g., customer IDs, long numeric date ranges like 20260501)
+  name = name.replace(/\b\d{5,}\b/g, "");
+  // - Remove timestamps/times like 183012 or 220605 (6 digits, but let's be careful about years, so 5+ covers this)
+  name = name.replace(/\b\d{6}\b/g, "");
+
+  // 6. Clean up excessive whitespace
+  name = name.replace(/\s+/g, " ").trim();
+
+  // 7. Check if filename is valid and has meaningful content
+  const isJunk = !name || 
+    /^(document|file|scan|image|whatsapp image)$/i.test(name) ||
+    /^[0-9\s\-()]+$/.test(name); // contains only numbers and spacing
+
+  if (isJunk) {
+    return category ? category : 'Document';
+  }
+
+  // 8. Convert to Title Case
+  name = name
+    .toLowerCase()
+    .split(' ')
+    .filter(word => word.length > 0)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
+  // 9. Enforce 80 characters limit and trim
+  if (name.length > 80) {
+    name = name.substring(0, 80).trim();
+  }
+
+  return name;
+}
+

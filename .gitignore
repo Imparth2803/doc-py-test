@@ -16,3 +16,13 @@ server/dist/
 .vscode/
 *.DS_Store
 *.pdf
+
+# Electron packaging and local binaries
+electron/node_modules/
+electron/npm-cache/
+electron/dist/
+electron/python/
+electron/bin/
+electron/models/qwen/qwen2.5-1.5b.gguf
+electron/*.log
+electron/*.log.*

@@ -1,6 +1,5 @@
 import React from 'react';
 import { FileText, Download } from 'lucide-react';
-import { cn } from '../../lib/utils';
 import { Document } from '../../types';
 import { formatUploadTime } from '../../utils/dashboardUtils';
 import { downloadDocument } from '../../lib/shareUtils';
@@ -63,14 +62,6 @@ export function RecentDocumentsWidget({ recentDocs, onViewAll, onDocClick }: Rec
                     <Download className="w-4 h-4" />
                   </button>
                 )}
-                <span className={cn(
-                  "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border shrink-0",
-                  doc.status === 'COMPLETED' ? 'bg-green-50/50 text-green-600 border-green-150' :
-                  doc.status === 'FAILED' ? 'bg-red-50/50 text-red-600 border-red-150' :
-                  'bg-blue-50/50 text-blue-600 border-blue-150'
-                )}>
-                  {doc.status}
-                </span>
               </div>
             </div>
           )) : (
@@ -84,3 +75,4 @@ export function RecentDocumentsWidget({ recentDocs, onViewAll, onDocClick }: Rec
     </DashboardWidget>
   );
 }
+

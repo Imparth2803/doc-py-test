@@ -75,7 +75,7 @@ export function Review() {
   useEffect(() => {
     if (pendingDoc?.aiResult) {
       setDocName(pendingDoc.aiResult.documentName || pendingDoc.file.name);
-      const { entities: resEnt, docType: resFold } = pendingDoc.aiResult;
+      const { entities: resEnt, vaultFolder: resFold } = pendingDoc.aiResult;
       
       if ((resEnt && resEnt.length > 0 && resEnt[0] === 'UNKNOWN') || resFold === 'UNKNOWN') {
          setIsCreatingNewFolder(true);
@@ -147,7 +147,9 @@ export function Review() {
       }
     }
 
-    saveDocument(docName || pendingDoc.file.name, finalFolder, finalCategory, tags, finalPreviewUrl, finalEntities, finalFolder, finalMetadata as any, unitsUsed, creditCost, pendingDoc.mimeType);
+    const targetDocType = pendingDoc.aiResult?.docType || 'Document';
+
+    saveDocument(docName || pendingDoc.file.name, finalFolder, finalCategory, tags, finalPreviewUrl, finalEntities, targetDocType, finalMetadata as any, unitsUsed, creditCost, pendingDoc.mimeType);
   };
 
   const finalMetadata = {
@@ -159,11 +161,6 @@ export function Review() {
          }
       : {})
    };
-
-   console.log(
-   "[SAVE_SUMMARY_FIELDS]",
-   finalMetadata.summaryFields
-   );
 
   const handleRemoveTag = (indexToRemove: number) => {
     setTags(tags.filter((_, i) => i !== indexToRemove));

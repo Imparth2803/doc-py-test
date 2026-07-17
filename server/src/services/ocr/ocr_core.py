@@ -73,7 +73,7 @@ def get_ocr_instance(language="en"):
     Confirm detection reader explicitly initializes as easyocr.Reader(['en', 'hi', 'gu'], gpu=True)
     """
     logger.info("[OCR] Initializing EasyOCR Reader for ['en', 'hi', 'gu']...")
-    return easyocr.Reader(['en', 'hi', 'gu'], gpu=True)
+    return easyocr.Reader(['en', 'hi', 'gu'], gpu=False)
 
 def perform_trocr_inference(file_path: str, first_pass_results: list, language: str, request_id: str = "N/A"):
     """

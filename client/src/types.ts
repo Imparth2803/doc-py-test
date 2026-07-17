@@ -57,5 +57,10 @@ export type Document = {
     tablesCompleted: boolean;
     aiCompleted: boolean;
   };
+  reminderState?: {
+    status: 'ACTIVE' | 'COMPLETED' | 'DISMISSED';
+    completedDate?: string;
+    updatedAt?: string;
+  };
 };
 

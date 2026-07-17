@@ -27,15 +27,15 @@ export const mapApiDocumentToDocument = (
       ? doc.createdAt.split('T')[0]
       : new Date().toISOString().split('T')[0],
 
-    folder: 'Uploads',
+    folder: doc.vaultFolder || 'Uploads',
+    vaultFolder: doc.vaultFolder,
+    vaultCategory: doc.vaultCategory,
 
     tags: doc.tags || [],
 
     entities: doc.entities || [],
 
-    docType:
-      doc.mimeType?.split('/')[1] ||
-      'Document',
+    docType: doc.docType || 'Document',
 
     metadata: doc.metadata || {},
 
@@ -51,6 +51,7 @@ export const mapApiDocumentToDocument = (
 
     pinnedFields: doc.pinnedFields || [],
     
-    tables: doc.tables
+    tables: doc.tables,
+    reminderState: doc.reminderState
   };
 };
